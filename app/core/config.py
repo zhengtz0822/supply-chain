@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # CORS 配置
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
+    # DashScope API 配置 (用于 AgentScope)
+    DASHSCOPE_API_KEY: str = "sk-48fcdafb9b374727baddb97b3b33c0d4"
+
+    # 高德地图mcp地址
+    AMAP_MCP_URL: str = ""
+    # 高德地图APPKEY
+    AMAP_APP_KEY: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = True

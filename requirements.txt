@@ -16,7 +16,16 @@ alembic>=1.12.0
 pydantic==2.9.2
 pydantic-settings==2.6.0
 
+# LLM 和 Agent 框架
+agentscope>=0.1.0  # Alibaba AgentScope 多智能体框架
+
+# 数据处理 (地址解析)
+pandas>=2.0.0
+openpyxl>=3.1.0  # Excel 支持
+xlrd>=2.0.0  # 旧版 Excel 支持
+
 # 其他依赖
-python-multipart==0.0.12  # 表单数据支持
-python-jose[cryptography]==3.3.0  # JWT 支持
+python-multipart==0.0.22  # 表单数据支持
+python-jose[cryptography]==3.4.0  # JWT 支持
 passlib[bcrypt]==1.7.4  # 密码哈希
+httpx>=0.27.0  # HTTP 客户端 (MCP 调用)

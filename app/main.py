@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from app.tools.tool_registry import initialize_tools
 import logging
-
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.routers import example
@@ -27,6 +27,8 @@ async def lifespan(app: FastAPI):
     print("Initializing database...")
     init_db()
     print("Database initialized successfully!")
+    # 初始化 MCP 工具
+    await initialize_tools()
     yield
     # 关闭时执行
     print("Shutting down application...")

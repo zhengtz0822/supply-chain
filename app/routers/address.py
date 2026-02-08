@@ -104,7 +104,7 @@ def health_check():
 
 
 @router.post("/match", response_model=AddressMatchResponse, summary="地址匹配度分析")
-def match_addresses(request: AddressMatchRequest):
+async def match_addresses(request: AddressMatchRequest):
     """
     地址匹配度分析
 
@@ -113,7 +113,7 @@ def match_addresses(request: AddressMatchRequest):
     - 判断是否描述同一地理位置
     - 提供优化建议和置信度评分
 
-    TODO: 具体逻辑待实现
+    使用 AgentScope ReActAgent 进行智能分析
     """
     logger.info(f"[Router] 收到地址匹配请求，源地址: {request.source.address_text}, 候选数量: {len(request.candidates)}")
 
@@ -126,7 +126,7 @@ def match_addresses(request: AddressMatchRequest):
         )
 
     try:
-        result = AddressService.match_addresses(
+        result = await AddressService.match_addresses(
             source=request.source,
             candidates=request.candidates,
             task_config=request.task_config
@@ -138,11 +138,11 @@ def match_addresses(request: AddressMatchRequest):
             data=result.get('result')
         )
 
-    except NotImplementedError as e:
-        logger.error(f"[Router] 功能未实现: {str(e)}")
+    except ValueError as e:
+        logger.error(f"[Router] 地址匹配失败: {str(e)}")
         return AddressMatchResponse(
             success=False,
-            message=f"功能待实现: {str(e)}",
+            message=f"地址匹配失败: {str(e)}",
             data=None
         )
     except Exception as e:

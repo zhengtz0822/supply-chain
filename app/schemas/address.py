@@ -90,8 +90,8 @@ class AddressSource(BaseModel):
 
 class AddressRecommendation(BaseModel):
     """地址建议"""
-    action: str = Field(..., description="建议操作: update_to_candidate, keep_original, manual_review")
-    suggested_candidate_id: Optional[str] = Field(None, description="建议采用的候选POI ID")
+    action: str = Field(..., description="建议(新地址、相似地址)")
+    suggested_candidate_id: Optional[str] = Field(None, description="建议采用的候选POI ID（如果action为相似地址）")
     suggested_address_text: Optional[str] = Field(None, description="建议采用的地址文本")
     overall_confidence: float = Field(..., description="整体置信度 0-1")
     reason: str = Field(..., description="建议原因")
@@ -100,6 +100,7 @@ class AddressRecommendation(BaseModel):
 class AddressMatch(BaseModel):
     """地址匹配结果"""
     candidate_id: str = Field(..., description="候选POI ID")
+    address_text: str = Field(..., description="候选地址文本")
     is_same_location: bool = Field(..., description="是否同一位置")
     confidence_score: float = Field(..., description="置信度分数 0-1")
     distance_meters: Optional[float] = Field(None, description="距离（米）")
@@ -109,7 +110,7 @@ class AddressMatch(BaseModel):
 class AddressMatchResult(BaseModel):
     """地址匹配结果"""
     source: AddressSource = Field(..., description="地址源信息")
-    recommendation: AddressRecommendation = Field(..., description="匹配建议")
+    recommendation: AddressRecommendation = Field(..., description="全局推荐信息")
     matches: List[AddressMatch] = Field(default_factory=list, description="匹配的候选POI列表")
 
 

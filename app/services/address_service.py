@@ -1,14 +1,30 @@
 # 依赖安装命令:
-# pip install pandas openpyxl xlrd
+# pip install pandas openpyxl xlrd agentscope
 
 import pandas as pd
 import re
 import os
 import logging
+import asyncio
 from typing import List, Dict, Tuple, Optional
+from pathlib import Path
+
+from agentscope.model import DashScopeChatModel
+# AgentScope 导入
+from agentscope.agent import ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.tool import Toolkit
+
+# LangChain 导入 (仅用于 call_llm_for_address_refinement)
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
-from pathlib import Path
+
+# 配置导入
+from app.core.config import get_settings
+# mcp工具导入
+from app.tools.tool_registry import get_toolkit
+
 from app.schemas.address import (
     AddressColumnInfo,
     AddressResultItem,
@@ -314,9 +330,10 @@ class AddressService:
 
         logger.info(f"[LLM] 初始化 Qwen 客户端...")
         # 初始化LLM客户端
+        settings = get_settings()
         llm = ChatOpenAI(
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            api_key="sk-48fcdafb9b374727baddb97b3b33c0d4",
+            api_key=settings.DASHSCOPE_API_KEY,
             model="qwen-plus",
             temperature=0.7,
         )
@@ -376,13 +393,58 @@ class AddressService:
             raise ValueError(f"LLM地址识别失败: {str(e)}")
 
     @staticmethod
-    def match_addresses(
+    def _build_address_match_prompt(distance_threshold: float) -> str:
+        """
+        构建地址匹配智能体的系统提示词
+
+        Args:
+            distance_threshold: 距离阈值（米）
+
+        Returns:
+            系统提示词字符串
+        """
+        prompt = f"""你是一个地理信息智能分析引擎，负责判断多个候选地址是否与源地址表示同一物理位置。
+
+## 分析原则
+1. **空间一致性**：优先使用经纬度计算距离（≤{distance_threshold} 米为强一致）。
+2. **语义锚定**：`firstLevelAddress` 是核心 POI 标识，比 street-level 地址更重要。
+3. **模糊容忍**：源地址中的"附近""旁边"等应被合理泛化，不视为不匹配。
+4. **冲突处理**：若多个候选高置信且互斥 → action设为 manual_review；若无合理匹配 → action设为 keep_original。
+## 使用工具
+1. **地址解析工具**：如果经纬度缺失使用maps_geo工具返回经纬度。
+## 输出要求
+请严格按照 JSON Schema 输出结果，包含：
+- 只输出 JSON，不要任何其他文字、解释、Markdown（如 ```json）。
+- 确保 JSON 语法完全正确：所有字段用双引号，对象间用逗号分隔，无多余字符。
+- 仔细检查 "source" 和 "recommendation" 之间是否有逗号！
+- 输出必须能被 Python json.loads() 直接解析。
+
+- **source**: 源地址回显（address_text, latitude, longitude）
+- 确保 "source" 和 "recommendation" 还有 matches 名称的完整性
+- **recommendation**: 全局推荐信息 
+  - action: 建议(新地址、相似地址)
+  - suggested_candidate_id: 建议采用的候选POI ID（如果action为相似地址）
+  - suggested_address_text: 建议采用的地址文本
+  - overall_confidence: 整体置信度（0-1）
+  - reason: 建议原因（详细说明）
+- **matches**: 每个候选的匹配详情列表
+  - candidate_id: 候选ID
+  - address_text: 候选地址文本
+  - is_same_location: 是否同一位置（布尔值）
+  - confidence_score: 置信度分数（0-1）
+  - distance_meters: 距离（米，如果有经纬度）
+  - reason: 匹配原因（详细说明）
+"""
+        return prompt
+
+    @staticmethod
+    async def match_addresses(
         source: 'AddressMatchSource',
         candidates: List['AddressMatchCandidate'],
         task_config: Optional['AddressMatchTaskConfig'] = None
     ) -> Dict:
         """
-        地址匹配度分析
+        地址匹配度分析 (使用 AgentScope ReActAgent)
 
         判断源地址与候选地址是否描述同一地理位置
 
@@ -399,26 +461,38 @@ class AddressService:
         # 获取配置参数
         distance_threshold = task_config.distance_threshold_meters if task_config else 100
 
-        # 初始化 LLM 客户端
-        logger.info(f"[地址匹配] 初始化 Qwen 客户端...")
-        llm = ChatOpenAI(
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            api_key="sk-48fcdafb9b374727baddb97b3b33c0d4",
-            model="qwen-plus",
-            temperature=0.3,  # 降低温度以获得更一致的结果
+        # 初始化 AgentScope ReActAgent
+        logger.info(f"[地址匹配] 初始化 AgentScope ReActAgent...")
+
+        # 从 settings 获取 API Key
+        settings = get_settings()
+        api_key = settings.DASHSCOPE_API_KEY
+
+        # 构建系统提示词
+        sys_prompt = AddressService._build_address_match_prompt(distance_threshold)
+        logger.info(f"[地址匹配] 系统提示词长度: {len(sys_prompt)} 字符")
+        # 打印提示词
+        logger.info(f"[地址匹配] 系统提示词: \n{sys_prompt}")
+        import agentscope
+        agentscope.init(studio_url="http://localhost:3000")
+
+        # 初始化工具
+        toolkit = get_toolkit()
+        # 初始化 DashScope 模型
+        model = DashScopeChatModel(
+            model_name="qwen-plus",
+            api_key=api_key,
+            # base_http_api_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            stream=False
         )
 
-        # 配置结构化输出
-        logger.info(f"[地址匹配] 配置结构化输出...")
-        structured_llm = llm.bind(
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "address_match_analysis",
-                    "strict": True,
-                    "schema": AddressMatchResult.model_json_schema()
-                }
-            }
+        # 创建 ReActAgent
+        agent = ReActAgent(
+            name="address_match_agent",
+            sys_prompt=sys_prompt,
+            model=model,
+            formatter=DashScopeChatFormatter(),
+            toolkit=toolkit,
         )
 
         # 构建候选地址信息文本
@@ -433,10 +507,8 @@ class AddressService:
   - 经纬度: ({candidate.latitude}, {candidate.longitude})
 """
 
-        # 构建提示词
-        prompt = f"""你是一个地理信息智能分析引擎，负责判断多个候选地址是否与源地址表示同一物理位置。
-
-请基于以下输入进行专业分析：
+        # 构建用户消息
+        user_prompt = f"""请分析以下地址匹配任务：
 
 ## 源地址 (source)
 - 地址文本: {source.address_text}
@@ -448,46 +520,46 @@ class AddressService:
 ## 任务配置
 - 距离阈值: {distance_threshold} 米
 
-## 分析原则
-1. **空间一致性**：优先使用经纬度计算距离（≤{distance_threshold} 米为强一致）。
-2. **语义锚定**：`firstLevelAddress` 是核心 POI 标识，比 street-level 地址更重要。
-3. **模糊容忍**：源地址中的"附近""旁边"等应被合理泛化，不视为不匹配。
-4. **冲突处理**：若多个候选高置信且互斥 → action设为 manual_review；若无合理匹配 → action设为 keep_original。
-
-## 输出要求
-请输出符合 JSON Schema 的结果，包含：
-- **source**: 源地址回显（address_text, latitude, longitude）
-- **recommendation**: 全局推荐
-  - action: 建议操作（update_to_candidate/keep_original/manual_review）
-  - suggested_candidate_id: 建议采用的候选POI ID（如果action为update_to_candidate）
-  - suggested_address_text: 建议采用的地址文本
-  - overall_confidence: 整体置信度（0-1）
-  - reason: 建议原因（详细说明）
-- **matches**: 每个候选的匹配详情列表
-  - candidate_id: 候选ID
-  - is_same_location: 是否同一位置（布尔值）
-  - confidence_score: 置信度分数（0-1）
-  - distance_meters: 距离（米，如果有经纬度）
-  - reason: 匹配原因（详细说明）
-
-请开始分析："""
+请开始分析并输出结构化结果。"""
 
         try:
-            # 调用 LLM
-            logger.info(f"[地址匹配] 开始调用 LLM 分析...")
-            response = structured_llm.invoke([HumanMessage(content=prompt)])
-            logger.info(f"[地址匹配] API 调用成功，响应内容: {response.content[:300]}...")
+            # 调用 ReActAgent，使用 structured_model 获取结构化输出
+            logger.info(f"[地址匹配] 开始调用 ReActAgent 分析...")
+            # 打印用户提示词内容
+            logger.info(f"[地址匹配] 用户提示词: \n{user_prompt}")
 
-            # 解析响应
-            result = AddressMatchResult.model_validate_json(response.content)
-            logger.info(f"[地址匹配] 解析成功，匹配结果: action={result.recommendation.action}, 置信度={result.recommendation.overall_confidence}")
+            msg = Msg(
+                "user",
+                user_prompt,
+                "user",
+            )
+            # response = await agent(
+            #     Msg(
+            #         "user",
+            #         user_prompt,
+            #         "user",
+            #     ),
+            #     # structured_model=AddressMatchResult,
+            # )
+            llmResponse =  await agent( msg, structured_model=AddressMatchResult)
+            # 从响应中获取结构化结果
+            # 直接打印整个respmse
+            logger.info(f"[地址匹配] 解析结果: \n{llmResponse}")
+            result = llmResponse.metadata  # AgentScope 将结构化输出放在 metadata 字段中
+
+            # logger.info(f"[地址匹配] 解析成功，匹配结果: action={result.recommendation.action}, 置信度={result.recommendation.overall_confidence}")
 
             return {
                 'success': True,
-                'message': f'地址匹配分析完成，建议操作: {result.recommendation.action}',
+                'message': f'地址匹配分析完成，建议操作:',
                 'result': result
             }
+            # return {
+            #     'success': True,
+            #     'message': f'地址匹配分析完成，建议操作:',
+            #     'result': llmResponse
+            # }
 
         except Exception as e:
-            logger.error(f"[地址匹配] LLM分析失败: {str(e)}", exc_info=True)
+            logger.error(f"[地址匹配] Agent分析失败: {str(e)}", exc_info=True)
             raise ValueError(f"地址匹配分析失败: {str(e)}")
