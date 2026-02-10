@@ -10,7 +10,10 @@
 """
 import logging
 import json
+from app.core.config import get_settings
 from typing import Optional, Dict, Any
+
+import httpx
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
@@ -43,26 +46,27 @@ class LogisticsActionAgent(AgentBase):
             物流信息字典
         """
         # TODO: 接入真实业务 API
+
         # 示例伪代码:
-        # async with httpx.AsyncClient() as client:
-        #     response = await client.get(
-        #         f"{API_BASE_URL}/logistics/{order_number}"
-        #     )
-        #     return response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{get_settings().API_BASE_URL}/orderInfoService/getOrderInfo?orderNo={order_number}"
+            )
+            return response.json()
 
         # 模拟返回数据
-        logger.info(f"[Actor] 调用查询API: {order_number}")
-        return {
-            "order_number": order_number,
-            "status": "在途中",
-            "current_location": "北京转运中心",
-            "estimated_delivery": "2024-01-15",
-            "history": [
-                {"time": "2024-01-10 10:00", "location": "深圳", "status": "已揽收"},
-                {"time": "2024-01-12 08:00", "location": "武汉", "status": "运输中"},
-                {"time": "2024-01-13 15:00", "location": "北京", "status": "到达"},
-            ]
-        }
+        # logger.info(f"[Actor] 调用查询API: {order_number}")
+        # return {
+        #     "order_number": order_number,
+        #     "status": "在途中",
+        #     "current_location": "北京转运中心",
+        #     "estimated_delivery": "2024-01-15",
+        #     "history": [
+        #         {"time": "2024-01-10 10:00", "location": "深圳", "status": "已揽收"},
+        #         {"time": "2024-01-12 08:00", "location": "武汉", "status": "运输中"},
+        #         {"time": "2024-01-13 15:00", "location": "北京", "status": "到达"},
+        #     ]
+        # }
 
     async def _api_modify_logistics(
         self,

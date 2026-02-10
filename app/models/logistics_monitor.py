@@ -17,8 +17,11 @@ class ImageContent(BaseModel):
 ContentItem = Union[TextContent, ImageUrlContent, ImageContent]
 
 class ChatRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(alias="sessionId", description="会话ID")
     content: List[ContentItem] = Field(..., min_items=1)
+
+    class Config:
+        populate_by_name = True  # 允许使用别名和字段名
 
 class ChatResponse(BaseModel):
     reply: str

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # DashScope API 配置 (用于 AgentScope)
     DASHSCOPE_API_KEY: str = "sk-48fcdafb9b374727baddb97b3b33c0d4"
 
+    # 业务系统地址
+    API_BASE_URL: str = "http://localhost:48080/admin-api/aiagent"
+
     # 高德地图mcp地址
     AMAP_MCP_URL: str = ""
     # 高德地图APPKEY

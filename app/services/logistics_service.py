@@ -12,16 +12,17 @@
 """
 import logging
 import json
+import asyncio
 from typing import Dict, Any, Optional, List
+from sqlalchemy.ext.asyncio import create_async_engine
 from agentscope.message import Msg
 from app.core.config import get_settings
 from agentscope.pipeline import MsgHub
 from agentscope.model import DashScopeChatModel
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.formatter import DashScopeMultiAgentFormatter
-from agentscope.memory import InMemoryMemory
+from agentscope.memory import AsyncSQLAlchemyMemory, InMemoryMemory
 
-from app.services.session_manager import session_manager
 from app.agents.logistics_perception_agent import LogisticsPerceptionAgent
 from app.agents.logistics_reasoning_agent import LogisticsReasoningAgent
 from app.agents.logistics_action_agent import LogisticsActionAgent
@@ -35,72 +36,58 @@ class LogisticsService:
     物流跟踪服务
 
     职责:
-    1. 初始化和管理多Agent系统
-    2. 协调各Agent之间的通信
-    3. 处理用户请求并返回结果
-    4. 管理会话上下文持久化
+    1. 初始化共享资源（模型配置、数据库引擎）
+    2. 为每个请求创建独立的Agent实例（方案A：保证并发安全）
+    3. 协调多Agent工作流程
+    4. 通过Memory实现会话上下文持久化
     """
 
-    # 类变量，存储Agent实例（单例模式）
-    _perceiver: Optional[LogisticsPerceptionAgent] = None
-    _reasoner: Optional[LogisticsReasoningAgent] = None
-    _actor: Optional[LogisticsActionAgent] = None
-    _dialog: Optional[LogisticsDialogAgent] = None
+    # 类变量，存储共享配置（不存储Agent实例）
+    _model_config = None
+    _single_formatter = None
+    _multi_formatter = None
+    _memory_engine = None
     _initialized = False
 
     @classmethod
     async def initialize(cls):
         """
-        初始化所有Agent
+        初始化共享资源（模型配置、数据库引擎）
 
         应在应用启动时调用一次
+        注意：不创建Agent实例，Agent在每次请求时创建（方案A）
         """
         if cls._initialized:
             return
 
-        logger.info("[LogisticsService] 开始初始化多Agent系统...")
+        logger.info("[LogisticsService] 开始初始化共享资源...")
 
-        # 获取模型配置（从环境变量或配置文件）
-        import os
+        # 获取模型配置
         import agentscope
-        api_key =get_settings().DASHSCOPE_API_KEY
-        agentscope.init(studio_url="http://localhost:3000")
-        # 创建模型配置
-        model_config = DashScopeChatModel(
+        api_key = get_settings().DASHSCOPE_API_KEY
+        # 初始化 AgentScope
+        agentscope.init()
+
+        # 创建数据库引擎（共享，用于创建Memory实例）
+        cls._memory_engine = create_async_engine(
+            "sqlite+aiosqlite:///./supply_chain_memory.db",
+            echo=False
+        )
+        logger.info("[LogisticsService] 数据库引擎已创建")
+
+        # 创建模型配置（共享）
+        cls._model_config = DashScopeChatModel(
             model_name="qwen-plus",
             api_key=api_key,
             stream=False,
         )
 
-        # 创建格式化器
-        # DialogAgent 使用单智能体格式化器
-        single_formatter = DashScopeChatFormatter()
-        # 其他Agent使用多智能体格式化器（因为会在MsgHub中通信）
-        multi_formatter = DashScopeMultiAgentFormatter()
-
-        # 初始化各Agent
-        cls._perceiver = LogisticsPerceptionAgent(
-            model_config=model_config,
-            formatter=multi_formatter,
-            memory=InMemoryMemory(),
-        )
-
-        cls._reasoner = LogisticsReasoningAgent(
-            model_config=model_config,
-            formatter=multi_formatter,
-            memory=InMemoryMemory(),
-        )
-
-        cls._actor = LogisticsActionAgent()
-
-        cls._dialog = LogisticsDialogAgent(
-            model_config=model_config,
-            formatter=single_formatter,
-            memory=InMemoryMemory(),
-        )
+        # 创建格式化器（共享）
+        cls._single_formatter = DashScopeChatFormatter()
+        cls._multi_formatter = DashScopeMultiAgentFormatter()
 
         cls._initialized = True
-        logger.info("[LogisticsService] 多Agent系统初始化完成")
+        logger.info("[LogisticsService] 共享资源初始化完成（方案A：每请求创建新Agent）")
 
     @staticmethod
     def _extract_user_text(content: List) -> str:
@@ -157,15 +144,51 @@ class LogisticsService:
         return str(content)
 
     @staticmethod
+    def _create_agents(memory=None):
+        """
+        创建新的Agent实例（工厂方法）
+
+        每次请求调用此方法创建独立的Agent实例，保证并发安全
+
+        Args:
+            memory: 会话记忆对象（可选，用于多轮对话）
+
+        Returns:
+            (perceiver, reasoner, actor, dialog) 四个Agent实例的元组
+        """
+        perceiver = LogisticsPerceptionAgent(
+            model_config=LogisticsService._model_config,
+            formatter=LogisticsService._multi_formatter,
+            memory=memory,
+        )
+
+        reasoner = LogisticsReasoningAgent(
+            model_config=LogisticsService._model_config,
+            formatter=LogisticsService._multi_formatter,
+            memory=memory,
+        )
+
+        actor = LogisticsActionAgent()
+
+        dialog = LogisticsDialogAgent(
+            model_config=LogisticsService._model_config,
+            formatter=LogisticsService._single_formatter,
+            memory=memory,
+        )
+
+        return perceiver, reasoner, actor, dialog
+
+    @staticmethod
     async def ordertalk(session_id: str, content: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         物流订单对话处理入口
 
         工作流程:
-        1. 感知智能体提取关键信息（单号、地址等）
-        2. 推理智能体分析意图、规划步骤
-        3. 执行智能体执行业务操作
-        4. 对话智能体生成用户友好的回复
+        1. 为本次请求创建独立的 Memory（实现会话隔离）
+        2. 感知智能体提取关键信息（单号、地址等）
+        3. 推理智能体分析意图、规划步骤
+        4. 执行智能体执行业务操作
+        5. 对话智能体生成用户友好的回复
 
         Args:
             session_id: 会话ID，用于多轮对话上下文管理
@@ -180,11 +203,23 @@ class LogisticsService:
         """
         logger.info(f"[LogisticsService] ordertalk 被调用，session_id: {session_id}")
 
-        try:
-            # 确保Agent已初始化
-            if not LogisticsService._initialized:
-                await LogisticsService.initialize()
+        # 确保共享资源已初始化
+        if not LogisticsService._initialized:
+            await LogisticsService.initialize()
 
+        # 先创建会话独立的 Memory
+        memory = AsyncSQLAlchemyMemory(
+            engine_or_session=LogisticsService._memory_engine,
+            user_id="default",
+            session_id=session_id,
+        )
+        logger.info(f"[LogisticsService] 创建会话独立 Memory: {session_id}")
+
+        # 创建本次请求专用的 Agent 实例（方案A：并发安全），并传入 Memory
+        perceiver, reasoner, actor, dialog = LogisticsService._create_agents(memory=memory)
+        logger.info(f"[LogisticsService] 创建新Agent实例（方案A）")
+
+        try:
             # 提取用户输入文本
             user_input = LogisticsService._extract_user_text(content)
             logger.info(f"[LogisticsService] 用户输入: {user_input[:100]}...")
@@ -196,14 +231,14 @@ class LogisticsService:
                 role="user"
             )
 
-            # 获取会话历史（用于上下文理解）
-            session_history = await session_manager.get_session_history(session_id)
+            # 将用户消息添加到 memory
+            await memory.add(user_msg)
 
             # ====================================================================
             # Step 1: 感知 - 提取关键信息
             # ====================================================================
             logger.info("[LogisticsService] === Step 1: 感知 ===")
-            perception_msg = await LogisticsService._perceiver.perceive(user_msg)
+            perception_msg = await perceiver.perceive(user_msg)
             perception_result = perception_msg.metadata if hasattr(perception_msg, 'metadata') else {}
             logger.info(f"[LogisticsService] 感知结果: {perception_result}")
 
@@ -211,10 +246,9 @@ class LogisticsService:
             # Step 2: 推理 - 分析意图、规划步骤
             # ====================================================================
             logger.info("[LogisticsService] === Step 2: 推理 ===")
-            reasoning_msg = await LogisticsService._reasoner.reason(
+            reasoning_msg = await reasoner.reason(
                 user_input=user_input,
-                perception_result=perception_result,
-                conversation_history=session_history
+                perception_result=perception_result
             )
             reasoning_result = reasoning_msg.metadata if hasattr(reasoning_msg, 'metadata') else {}
             logger.info(f"[LogisticsService] 推理结果: intent={reasoning_result.get('intent')}")
@@ -242,7 +276,7 @@ class LogisticsService:
                 )
 
                 # 执行智能体执行操作
-                exec_result_msg = await LogisticsService._actor(action_msg)
+                exec_result_msg = await actor(action_msg)
                 execution_result = json.loads(exec_result_msg.content)
                 logger.info(f"[LogisticsService] 执行结果: {execution_result}")
 
@@ -260,7 +294,7 @@ class LogisticsService:
                     "clarification_questions": reasoning_result.get("clarification_questions", []) if hasattr(reasoning_result, "get") else [],
                 }
 
-            response_msg = await LogisticsService._dialog.format_response(
+            response_msg = await dialog.format_response(
                 reasoning_result=reasoning_dict,
                 execution_result=execution_result
             )
@@ -269,19 +303,13 @@ class LogisticsService:
             reply_text = LogisticsService._extract_text_from_msg(response_msg)
             logger.info(f"[LogisticsService] 生成回复: {reply_text[:100]}...")
 
-            # ====================================================================
-            # Step 5: 保存会话历史
-            # ====================================================================
-            # 保存用户消息
-            await session_manager.add_message(session_id, user_msg)
-
-            # 保存助手回复
+            # 将助手回复添加到 memory
             assistant_msg = Msg(
                 name="assistant",
                 content=reply_text,
                 role="assistant"
             )
-            await session_manager.add_message(session_id, assistant_msg)
+            await memory.add(assistant_msg)
 
             # ====================================================================
             # 返回结果
@@ -314,7 +342,12 @@ class LogisticsService:
             session_id: 会话ID
             user_id: 用户ID
         """
-        await session_manager.clear_session(session_id, user_id)
+        memory = AsyncSQLAlchemyMemory(
+            engine_or_session=LogisticsService._memory_engine,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        await memory.drop()
         logger.info(f"[LogisticsService] 会话已清除: {session_id}")
 
     @staticmethod
@@ -329,4 +362,9 @@ class LogisticsService:
         Returns:
             会话历史消息列表
         """
-        return await session_manager.get_session_history(session_id, user_id)
+        memory = AsyncSQLAlchemyMemory(
+            engine_or_session=LogisticsService._memory_engine,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        return await memory.get_memory()

@@ -48,10 +48,6 @@ class ReasoningResult(BaseModel):
         default=None,
         description="订单号"
     )
-    order_number: Optional[str] = Field(
-        default=None,
-        description="订单号"
-    )
 
     # 修改/插入操作相关
     target_status: Optional[str] = Field(
@@ -163,8 +159,7 @@ class LogisticsReasoningAgent(ReActAgent):
     async def reason(
         self,
         user_input: str,
-        perception_result: Optional[dict] = None,
-        conversation_history: Optional[list] = None
+        perception_result: Optional[dict] = None
     ) -> Msg:
         """
         推理用户意图，规划执行步骤
@@ -172,16 +167,15 @@ class LogisticsReasoningAgent(ReActAgent):
         Args:
             user_input: 用户原始输入
             perception_result: 感知智能体的提取结果
-            conversation_history: 对话历史（用于上下文理解）
 
         Returns:
             包含推理结果的消息，结构化输出为 ReasoningResult
         """
         logger.info(f"[Reasoner] 开始推理分析，用户输入: {user_input[:50]}...")
 
-        # 构建推理输入
-        reasoning_input = self._build_reasoning_input(
-            user_input, perception_result, conversation_history
+        # 构建推理输入（使用 self.memory 获取对话历史）
+        reasoning_input = await self._build_reasoning_input(
+            user_input, perception_result
         )
 
         # 创建推理消息
@@ -223,11 +217,10 @@ class LogisticsReasoningAgent(ReActAgent):
                 }, ensure_ascii=False)
             )
 
-    def _build_reasoning_input(
+    async def _build_reasoning_input(
         self,
         user_input: str,
-        perception_result: Optional[dict],
-        conversation_history: Optional[list]
+        perception_result: Optional[dict]
     ) -> str:
         """
         构建推理输入
@@ -235,7 +228,6 @@ class LogisticsReasoningAgent(ReActAgent):
         Args:
             user_input: 用户输入
             perception_result: 感知结果
-            conversation_history: 对话历史
 
         Returns:
             格式化的推理输入字符串
@@ -249,12 +241,14 @@ class LogisticsReasoningAgent(ReActAgent):
             parts.append(json.dumps(perception_result, ensure_ascii=False, indent=2))
             parts.append(f"```")
 
-        # 对话历史摘要
-        if conversation_history and len(conversation_history) > 0:
-            parts.append("\n## 对话上下文:")
-            recent = conversation_history[-3:]  # 最近3条
-            for msg in recent:
-                parts.append(f"- {msg.name}: {msg.content}")
+        # 对话历史摘要（从 self.memory 获取）
+        if self.memory is not None:
+            conversation_history = await self.memory.get_memory()
+            if conversation_history and len(conversation_history) > 0:
+                parts.append("\n## 对话上下文:")
+                recent = conversation_history[-3:]  # 最近3条
+                for msg in recent:
+                    parts.append(f"- {msg.name}: {msg.content}")
 
         # 用户输入
         parts.append(f"\n## 用户当前输入:")

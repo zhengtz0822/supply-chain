@@ -26,10 +26,6 @@ class PerceptionResult(BaseModel):
         default=None,
         description="订单号，如 order1234567890、ORD-2024-001"
     )
-    order_number: Optional[str] = Field(
-        default=None,
-        description="订单号，如 ORD-2024-001"
-    )
     phone: Optional[str] = Field(
         default=None,
         description="电话号码"
