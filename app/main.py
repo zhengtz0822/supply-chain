@@ -3,10 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.tools.tool_registry import initialize_tools
 import logging
+import agentscope
 from app.core.config import get_settings
 from app.core.database import init_db
 from app.routers import example
 from app.routers import address
+from app.routers import logistics
 
 # 配置日志
 logging.basicConfig(
@@ -29,6 +31,9 @@ async def lifespan(app: FastAPI):
     print("Database initialized successfully!")
     # 初始化 MCP 工具
     await initialize_tools()
+
+    # 初始化智能体
+    agentscope.init()
     yield
     # 关闭时执行
     print("Shutting down application...")
@@ -54,6 +59,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(example.router, prefix="/api/v1")
 app.include_router(address.router, prefix="/api/v1")
+app.include_router(logistics.router, prefix="/api/v1")
 
 
 # 根路径
