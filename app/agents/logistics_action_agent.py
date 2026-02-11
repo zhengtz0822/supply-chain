@@ -70,16 +70,20 @@ class LogisticsActionAgent(AgentBase):
 
     async def _api_modify_logistics(
         self,
-        order_number: str,
-        target_status: Optional[str] = None,
+        session_id: Optional[str] = None,
+        order_id: Optional[str] = None,
+        order_number: Optional[str] = None,
+        transport_status_name: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
         修改物流信息（伪代码）
 
         Args:
-            order_number: 订单号
-            target_status: 目标状态
+            session_id: 会话ID（用于审计追踪）
+            order_id: 订单ID（数据库唯一标识）
+            order_number: 订单编号（业务编号）
+            transport_status_name: 运输状态（待提货/运输中/已送达/已回单/异常滞留）
             **kwargs: 其他修改参数
 
         Returns:
@@ -87,19 +91,31 @@ class LogisticsActionAgent(AgentBase):
         """
         # TODO: 接入真实业务 API
         # 示例伪代码:
-        # async with httpx.AsyncClient() as client:
-        #     response = await client.put(
-        #         f"{API_BASE_URL}/logistics/{order_number}",
-        #         json={"status": target_status, **kwargs}
-        #     )
-        #     return response.json()
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "transportStatusName": transport_status_name,
+                "sessionId": session_id  # 会话ID用于审计日志
+            }
+            if order_id:
+                payload["id"] = order_id
+            if order_number:
+                payload["orderNumber"] = order_number
+
+            response = await client.post(
+                f"{get_settings().API_BASE_URL}/orderInfoService/updateOrderInfo",
+                json=payload
+            )
+            return response.json()
 
         # 模拟返回数据
-        logger.info(f"[Actor] 调用修改API: {order_number} -> {target_status}")
+        logger.info(f"[Actor] 调用修改API: session_id={session_id}, order_id={order_id}, order_number={order_number} -> {transport_status_name}")
         return {
             "success": True,
+            "session_id": session_id,
+            "order_id": order_id,
             "order_number": order_number,
-            "message": f"物流状态已更新为: {target_status}",
+            "transport_status_name": transport_status_name,
+            "message": f"物流状态已更新为: {transport_status_name}",
             "updated_at": "2024-01-13 16:00"
         }
 
@@ -273,30 +289,49 @@ class LogisticsActionAgent(AgentBase):
         执行修改操作
 
         Args:
-            order_number: 订单号
-            data: 完整指令数据
+            order_number: 订单号（保留兼容性）
+            data: 完整指令数据，包含:
+                - session_id: 会话ID（用于审计追踪）
+                - order_id: 订单ID（可选）
+                - order_number: 订单编号（可选）
+                - transport_status_name: 运输状态（必填）
 
         Returns:
             修改结果
         """
-        if not order_number:
+        # 提取参数
+        session_id = data.get("session_id")
+        order_id = data.get("order_id")
+        order_number = data.get("order_number") or order_number
+        transport_status_name = data.get("transport_status_name")
+
+        # 验证必填参数
+        if not order_id and not order_number:
             return {
                 "success": False,
-                "error": "缺少订单号"
+                "error": "缺少订单标识（order_id 或 order_number）"
             }
 
-        target_status = data.get("target_status")
-        if not target_status:
+        if not transport_status_name:
             return {
                 "success": False,
-                "error": "缺少目标状态"
+                "error": "缺少运输状态（transport_status_name）"
+            }
+
+        # 验证状态值是否合法
+        valid_statuses = ["待提货", "运输中", "已送达", "已回单", "异常滞留"]
+        if transport_status_name not in valid_statuses:
+            return {
+                "success": False,
+                "error": f"无效的运输状态，可选值: {', '.join(valid_statuses)}"
             }
 
         # 调用修改 API
         result = await self._api_modify_logistics(
+            session_id=session_id,
+            order_id=order_id,
             order_number=order_number,
-            target_status=target_status,
-            **{k: v for k, v in data.items() if k not in ["action", "order_number", "target_status"]}
+            transport_status_name=transport_status_name
         )
 
         return {

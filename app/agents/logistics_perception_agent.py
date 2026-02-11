@@ -123,7 +123,45 @@ class LogisticsPerceptionAgent(ReActAgent):
         """
         logger.info(f"[Perceiver] 开始感知分析，来源: {msg.name}")
 
-        # 调用父类的 reply 方法，使用结构化输出
+        # 检查消息内容是否包含图片
+        # content = msg.content
+        # has_image = False
+        #
+        # if isinstance(content, list):
+        #     # 多模态内容，检查是否有图片
+        #     for item in content:
+        #         if isinstance(item, dict):
+        #             if item.get("type") == "image":
+        #                 has_image = True
+        #                 break
+        #         elif hasattr(item, "type"):
+        #             if item.type == "image":
+        #                 has_image = True
+        #                 break
+        # elif isinstance(content, str):
+        #     # 纯文本内容，没有图片
+        #     has_image = False
+        #
+        # # 如果没有图片，直接返回默认结果（避免 formatter 报错）
+        # if not has_image:
+        #     logger.info("[Perceiver] 未检测到图片，返回默认感知结果")
+        #     result = PerceptionResult(
+        #         order_number=None,
+        #         phone=None,
+        #         address=None,
+        #         company=None,
+        #         image_description="未提供图片，无法进行图片识别",
+        #         confidence=0.0,
+        #         current_status=None
+        #     )
+        #     return Msg(
+        #         name=self.name,
+        #         role="assistant",
+        #         content=result.model_dump_json(),
+        #         metadata=result.model_dump()
+        #     )
+
+        # 有图片时，调用父类的 reply 方法，使用结构化输出
         try:
             result_msg: Msg = await self(
                 msg,

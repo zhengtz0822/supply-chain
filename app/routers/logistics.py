@@ -24,7 +24,7 @@ async def order_talk(request: ChatRequest):
         # 将 Pydantic 模型转换为字典列表
         content_dicts = [item.model_dump() for item in request.content]
 
-        result = await LogisticsService.ordertalk(
+        result = await LogisticsService.chat(
             session_id=request.session_id,
             content=content_dicts
         )

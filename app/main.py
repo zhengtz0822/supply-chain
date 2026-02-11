@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     # 初始化 MCP 工具
     await initialize_tools()
 
+    
     # 注意：AgentScope 在 LogisticsService 中初始化
     # 避免重复初始化导致状态混乱
     yield

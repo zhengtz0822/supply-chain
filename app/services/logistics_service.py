@@ -15,7 +15,7 @@ import json
 import asyncio
 from typing import Dict, Any, Optional, List
 from sqlalchemy.ext.asyncio import create_async_engine
-from agentscope.message import Msg
+from agentscope.message import Msg, ImageBlock, Base64Source, TextBlock
 from app.core.config import get_settings
 from agentscope.pipeline import MsgHub
 from agentscope.model import DashScopeChatModel
@@ -27,7 +27,18 @@ from app.agents.logistics_perception_agent import LogisticsPerceptionAgent
 from app.agents.logistics_reasoning_agent import LogisticsReasoningAgent
 from app.agents.logistics_action_agent import LogisticsActionAgent
 from app.agents.logistics_dialog_agent import LogisticsDialogAgent
-
+from agentscope.message import (
+    Msg,
+    Base64Source,
+    URLSource,
+    TextBlock,
+    ThinkingBlock,
+    ImageBlock,
+    AudioBlock,
+    VideoBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +55,7 @@ class LogisticsService:
 
     # 类变量，存储共享配置（不存储Agent实例）
     _model_config = None
+    _vision_model_config = None
     _single_formatter = None
     _multi_formatter = None
     _memory_engine = None
@@ -82,6 +94,13 @@ class LogisticsService:
             stream=False,
         )
 
+        # 创建感知模型配置（视觉模型）
+        cls._vision_model_config = DashScopeChatModel(
+            model_name="qwen-vl-plus",
+            api_key=api_key,
+            stream=False,
+        )
+
         # 创建格式化器（共享）
         cls._single_formatter = DashScopeChatFormatter()
         cls._multi_formatter = DashScopeMultiAgentFormatter()
@@ -109,6 +128,90 @@ class LogisticsService:
             elif item.get("type") == "image":
                 texts.append("[图片: base64编码]")
         return " ".join(texts)
+
+    @staticmethod
+    def _build_user_message(content: List) -> Any:
+        """
+        构建多模态用户消息（支持文本+图片）
+
+        按照 DashScope formatter 期望的格式：
+        - 文本: {"type": "text", "text": "..."}
+        - 图片: {"type": "image", "source": {"type": "base64", "data": "..."}}
+
+        Args:
+            content: 用户输入的内容列表
+
+        Returns:
+            多模态内容对象（文本或列表）
+        """
+        # 分离文本和图片
+        content_blocks = []
+
+        for item in content:
+            if item.get("type") == "text":
+                content_blocks.append(TextBlock(type="text",text=item.get("text", "")))
+            elif item.get("type") == "image_url":
+                content_blocks.append(
+                    ImageBlock(
+                        type="image",
+                        source=URLSource(
+                            type="url",
+                            url=item.get("image_url", "")
+                        )
+                    )
+                )
+            elif item.get("type") == "image":
+                content_blocks.append(
+                    ImageBlock(
+                    type="image",
+                    source=Base64Source(
+                        type="base64",
+                        media_type="image/png",
+                        data=item.get("image", "")
+                    )
+                ))
+            elif item.get("type") == "audio":
+                content_blocks.append(AudioBlock(
+                    source=Base64Source(
+                        type="base64",
+                        media_type="audio/mpeg",
+                        data=item.get("audio", "")
+                    )
+                ))
+            elif item.get("type") == "video":
+                content_blocks.append(VideoBlock(
+                    source=Base64Source(
+                        type="base64",
+                        media_type="video/mp4",
+                        data=item.get("video", "")
+                    )
+                ))
+
+        return content_blocks
+
+        # # 如果没有图片，只返回文本
+        # if not images:
+        #     return " ".join(texts)
+        #
+        # # 有图片时，构建多模态内容
+        # result = []
+        #
+        # # 添加文本块（使用 TextBlock 类）
+        # if texts:
+        #     result.append(TextBlock(text=" ".join(texts)))
+        #
+        # # 添加图片块（使用 ImageBlock 和 Base64Source 类）
+        # for base64_data in images:
+        #     image_block = ImageBlock(
+        #         source=Base64Source(
+        #             type="base64",
+        #             media_type="image/jpeg",  # 关键：使用 media_type 而不是 type
+        #             data=base64_data
+        #         )
+        #     )
+        #     result.append(image_block)
+
+        return result
 
     @staticmethod
     def _extract_text_from_msg(msg: Msg) -> str:
@@ -157,7 +260,7 @@ class LogisticsService:
             (perceiver, reasoner, actor, dialog) 四个Agent实例的元组
         """
         perceiver = LogisticsPerceptionAgent(
-            model_config=LogisticsService._model_config,
+            model_config=LogisticsService._vision_model_config,
             formatter=LogisticsService._multi_formatter,
             memory=memory,
         )
@@ -179,9 +282,10 @@ class LogisticsService:
         return perceiver, reasoner, actor, dialog
 
     @staticmethod
-    async def ordertalk(session_id: str, content: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def chat(session_id: str, content: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         物流订单对话处理入口
+
 
         工作流程:
         1. 为本次请求创建独立的 Memory（实现会话隔离）
@@ -206,8 +310,13 @@ class LogisticsService:
         # 确保共享资源已初始化
         if not LogisticsService._initialized:
             await LogisticsService.initialize()
+        import agentscope
+        # 初始化agentScope
+        agentscope.init(studio_url="http://localhost:3000")
 
         # 先创建会话独立的 Memory
+        # 注意：如果之前的测试导致 memory 中有格式不兼容的历史消息，
+        # 可能导致 formatter 报错。清除旧会话可以解决此问题。
         memory = AsyncSQLAlchemyMemory(
             engine_or_session=LogisticsService._memory_engine,
             user_id="default",
@@ -220,19 +329,21 @@ class LogisticsService:
         logger.info(f"[LogisticsService] 创建新Agent实例（方案A）")
 
         try:
-            # 提取用户输入文本
-            user_input = LogisticsService._extract_user_text(content)
-            logger.info(f"[LogisticsService] 用户输入: {user_input[:100]}...")
+            # 构建多模态用户消息（支持图片）
+            user_content = LogisticsService._build_user_message(content)
+            logger.info(f"[LogisticsService] 用户输入内容类型: {type(user_content).__name__}")
+
+            # 遍历user_content,如果元素中的有
 
             # 构建用户消息
             user_msg = Msg(
                 name="user",
-                content=user_input,
+                content=user_content,  # 可能是字符串或列表（多模态）
                 role="user"
             )
 
-            # 将用户消息添加到 memory
-            await memory.add(user_msg)
+            # 暂不添加多模态内容到 memory（序列化可能有问题）
+            # await memory.add(user_msg)
 
             # ====================================================================
             # Step 1: 感知 - 提取关键信息
@@ -246,6 +357,9 @@ class LogisticsService:
             # Step 2: 推理 - 分析意图、规划步骤
             # ====================================================================
             logger.info("[LogisticsService] === Step 2: 推理 ===")
+
+            # 提取纯文本用于推理（Reasoner 不需要图片）
+            user_input = LogisticsService._extract_user_text(content)
             reasoning_msg = await reasoner.reason(
                 user_input=user_input,
                 perception_result=perception_result
@@ -268,8 +382,10 @@ class LogisticsService:
                     name="Reasoner",
                     content=json.dumps({
                         "action": intent,
+                        "session_id": session_id,  # 添加会话ID用于审计追踪
+                        "order_id": reasoning_result.get("order_id"),
                         "order_number": reasoning_result.get("order_number"),
-                        "target_status": reasoning_result.get("target_status"),
+                        "transport_status_name": reasoning_result.get("transport_status_name"),
                         "new_info": reasoning_result.get("new_info", {}),
                     }, ensure_ascii=False),
                     role="assistant"

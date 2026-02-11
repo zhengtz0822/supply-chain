@@ -28,6 +28,16 @@ class ActionType(str):
     UNKNOWN = "unknown"       # 无法识别意图
 
 
+# 运输状态枚举
+class TransportStatus(str):
+    """运输状态枚举"""
+    PENDING_PICKUP = "待提货"
+    IN_TRANSIT = "运输中"
+    DELIVERED = "已送达"
+    RECEIPT_CONFIRMED = "已回单"
+    DELAYED = "异常滞留"
+
+
 # 结构化输出模型 - 推理结果
 class ReasoningResult(BaseModel):
     """推理智能体的结构化输出"""
@@ -44,16 +54,22 @@ class ReasoningResult(BaseModel):
     )
 
     # 提取的参数
+    order_id: Optional[str] = Field(
+        default=None,
+        description="订单ID（数据库唯一标识）"
+    )
     order_number: Optional[str] = Field(
         default=None,
-        description="订单号"
+        description="订单编号（业务编号）"
     )
 
-    # 修改/插入操作相关
-    target_status: Optional[str] = Field(
+    # 修改操作相关
+    transport_status_name: Optional[Literal["待提货", "运输中", "已送达", "已回单", "异常滞留"]] = Field(
         default=None,
-        description="目标状态（修改操作）"
+        description="运输状态（修改操作），可选值: 待提货、运输中、已送达、已回单、异常滞留"
     )
+
+    # 插入操作相关
     new_info: dict = Field(
         default_factory=dict,
         description="新增信息（插入操作），如 {location: 北京, time: 2024-01-01, plate: 京A12345}"
@@ -104,13 +120,23 @@ class LogisticsReasoningAgent(ReActAgent):
 
 ### 1. QUERY (查询)
 - 用户询问物流状态、运输进度
-- 所需信息: order_number
+- 所需信息: order_number 或 order_id
 - 示例: "查一下 order1234567890 的物流状态"
 
-### 2. MODIFY (修改)
-- 用户要求修改物流状态或信息
-- 所需信息: order_number + 修改目标
-- 示例: "把 order1234567890 的状态改为已送达"
+### 2. MODIFY (修改运输状态)
+- 用户要求修改订单的运输状态
+- 所需信息:
+  - order_number（订单编号）或 order_id（订单ID）
+  - transport_status_name（目标运输状态）
+- 支持的运输状态:
+  1. 待提货
+  2. 运输中
+  3. 已送达
+  4. 已回单
+  5. 异常滞留
+- 示例:
+  - "把 order1234567890 的状态改为已送达"
+  - "订单 ORD-2024-001 改为运输中"
 
 ### 3. INSERT (插入)
 - 用户要求添加新的物流节点信息
@@ -120,14 +146,14 @@ class LogisticsReasoningAgent(ReActAgent):
 ### 4. CLARIFY (澄清)
 - 信息不足，需要向用户询问
 - 生成针对性的问题
-- 示例问题: "请问订单号是多少？"
+- 示例问题: "请问订单号是多少？", "请确认要修改为什么状态？（待提货/运输中/已送达/已回单/异常滞留）"
 
 ## 推理流程
 1. 分析用户输入的意图和目标
 2. 检查必需参数是否齐全
-   - 查询: 必须有订单号
-   - 修改: 必须有订单号和修改目标
-   - 插入: 必须有订单号和新增信息
+   - 查询: 必须有 order_number 或 order_id
+   - 修改: 必须有订单标识和 transport_status_name
+   - 插入: 必须有 order_number 和新增信息
 3. 如果信息不足，返回 CLARIFY 并生成问题
 4. 如果信息充足，规划执行步骤
 5. 返回结构化的推理结果
@@ -136,11 +162,13 @@ class LogisticsReasoningAgent(ReActAgent):
 返回 JSON 格式，包含:
 - intent: 操作类型 (query/modify/insert/clarify/unknown)
 - task_steps: 执行步骤列表
-- order_number: 订单号
-- target_status: 目标状态（修改操作）
+- order_id: 订单ID（可选）
+- order_number: 订单编号（可选）
+- transport_status_name: 运输状态（修改操作，必须为5个选项之一）
 - new_info: 新增信息字典（插入操作）
 - clarification_questions: 澄清问题列表
 - confidence: 置信度 (0-1)
+- reasoning: 推理过程说明
 - reasoning: 推理过程说明
 
 ## 注意事项
