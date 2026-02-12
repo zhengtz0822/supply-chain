@@ -13,6 +13,7 @@ class ImageUrlContent(BaseModel):
 class ImageContent(BaseModel):
     type: Literal["image"] = "image"
     image: str  # base64
+    extension: str # 图片格式
 
 ContentItem = Union[TextContent, ImageUrlContent, ImageContent]
 

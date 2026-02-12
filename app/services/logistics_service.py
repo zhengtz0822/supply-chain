@@ -166,7 +166,7 @@ class LogisticsService:
                     type="image",
                     source=Base64Source(
                         type="base64",
-                        media_type="image/png",
+                        media_type=f"image/{item.get('extension', 'png')}",
                         data=item.get("image", "")
                     )
                 ))
