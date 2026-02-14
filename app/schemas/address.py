@@ -53,15 +53,15 @@ AddressParseResponse = ApiResponse[AddressParseData]
 # 地址匹配相关模型
 class AddressMatchSource(BaseModel):
     """源地址信息"""
-    address_text: str = Field(..., description="原始地址文本")
+    address_text: Optional[str] = Field(..., description="原始地址文本")
     latitude: Optional[float] = Field(None, description="纬度")
     longitude: Optional[float] = Field(None, description="经度")
 
 
 class AddressMatchCandidate(BaseModel):
     """候选地址信息"""
-    candidate_id: str = Field(..., description="候选POI ID")
-    address_text: str = Field(..., description="地址文本")
+    candidate_id: Optional[str] = Field(None, description="候选POI ID")
+    address_text: Optional[str] = Field(None, description="地址文本")
     actualAddress: Optional[str] = Field(None, description="完整结构化地址")
     firstLevelAddress: Optional[str] = Field(None, description="一级地址（如建筑物名称）")
     latitude: Optional[float] = Field(None, description="纬度")
@@ -76,14 +76,14 @@ class AddressMatchTaskConfig(BaseModel):
 
 class AddressMatchRequest(BaseModel):
     """地址匹配请求 Schema"""
-    source: AddressMatchSource = Field(..., description="源地址信息")
-    candidates: List[AddressMatchCandidate] = Field(..., description="候选地址列表")
+    source: Optional[AddressMatchSource] = Field(..., description="源地址信息")
+    candidates: Optional[List[AddressMatchCandidate]] = Field(..., description="候选地址列表")
     task_config: Optional[AddressMatchTaskConfig] = Field(None, description="任务配置")
 
 
 class AddressSource(BaseModel):
     """地址源信息"""
-    address_text: str = Field(..., description="原始地址文本")
+    address_text: Optional[str] = Field(..., description="原始地址文本")
     latitude: Optional[float] = Field(None, description="纬度")
     longitude: Optional[float] = Field(None, description="经度")
 
@@ -99,7 +99,7 @@ class AddressRecommendation(BaseModel):
 
 class AddressMatch(BaseModel):
     """地址匹配结果"""
-    candidate_id: str = Field(..., description="候选POI ID")
+    candidate_id: str = Field(..., description="候选ID")
     address_text: str = Field(..., description="候选地址文本")
     is_same_location: bool = Field(..., description="是否同一位置")
     confidence_score: float = Field(..., description="置信度分数 0-1")

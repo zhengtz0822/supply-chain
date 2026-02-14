@@ -161,7 +161,7 @@ class LogisticsPerceptionAgent(ReActAgent):
         #         metadata=result.model_dump()
         #     )
 
-        # 有图片时，调用父类的 reply 方法，使用结构化输出
+        # 调用父类的 reply 方法，使用结构化输出
         try:
             result_msg: Msg = await self(
                 msg,
@@ -171,10 +171,14 @@ class LogisticsPerceptionAgent(ReActAgent):
             # 提取结构化数据
             perception_data = result_msg.metadata
 
+            # 安全地获取感知数据，避免 None 错误
+            order_number = perception_data.get('order_number') if perception_data else None
+            confidence = perception_data.get('confidence', 0) if perception_data else 0
+            
             logger.info(
                 f"[Perceiver] 感知完成，"
-                f"订单号: {perception_data.get('order_number')}, "
-                f"置信度: {perception_data.get('confidence', 0)}"
+                f"订单号: {order_number}, "
+                f"置信度: {confidence}"
             )
 
             return result_msg

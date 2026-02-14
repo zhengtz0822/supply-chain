@@ -373,21 +373,60 @@ class LogisticsService:
             execution_result: Optional[Dict[str, Any]] = None
             intent = reasoning_result.get("intent", "unknown")
 
-            # 如果需要执行操作（query/modify/insert）
-            if intent in ["query", "modify", "insert"]:
+            # 如果需要执行操作（query/modify/modify_node/insert）
+            if intent in ["query", "modify", "modify_node", "insert"]:
                 logger.info("[LogisticsService] === Step 3: 执行 ===")
 
-                # 构建执行指令
-                action_msg = Msg(
-                    name="Reasoner",
-                    content=json.dumps({
+                # 判断是否为修改物流节点操作
+                modify_type = reasoning_result.get("modify_type")
+
+                if modify_type == "modify_node":
+                    # 修改物流节点信息
+                    action = "modify_node"
+                    action_content = {
+                        "action": action,
+                        "session_id": session_id,
+                        "order_id": reasoning_result.get("order_id"),
+                        "tracking_id": reasoning_result.get("tracking_id"),
+                        "node_location": reasoning_result.get("node_location"),
+                        "status_description": reasoning_result.get("status_description"),
+                        "operator": reasoning_result.get("operator"),
+                        "vehicle_plate": reasoning_result.get("vehicle_plate"),
+                        "occurred_at_str": reasoning_result.get("occurred_at_str"),
+                        "remark": reasoning_result.get("remark"),
+                        "content": reasoning_result.get("content"),
+                    }
+                elif intent == "insert":
+                    # 插入物流节点信息
+                    action = "insert"
+                    action_content = {
+                        "action": action,
+                        "session_id": session_id,
+                        "order_id": reasoning_result.get("order_id"),
+                        "node_location": reasoning_result.get("node_location"),
+                        "occurred_at_str": reasoning_result.get("occurred_at_str"),
+                        "status_description": reasoning_result.get("status_description"),
+                        "operator": reasoning_result.get("operator"),
+                        "vehicle_plate": reasoning_result.get("vehicle_plate"),
+                        "remark": reasoning_result.get("remark"),
+                        "content": reasoning_result.get("content"),
+                    }
+                else:
+                    # 其他操作类型（query/modify）
+                    action = intent
+                    action_content = {
                         "action": intent,
                         "session_id": session_id,  # 添加会话ID用于审计追踪
                         "order_id": reasoning_result.get("order_id"),
                         "order_number": reasoning_result.get("order_number"),
                         "transport_status_name": reasoning_result.get("transport_status_name"),
                         "new_info": reasoning_result.get("new_info", {}),
-                    }, ensure_ascii=False),
+                    }
+
+                # 构建执行指令
+                action_msg = Msg(
+                    name="Reasoner",
+                    content=json.dumps(action_content, ensure_ascii=False),
                     role="assistant"
                 )
 

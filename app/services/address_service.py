@@ -165,7 +165,10 @@ class AddressService:
                 keyword_match_count += 1
 
         # 至少有2行包含地址关键词
-        is_address = valid_count >= 2
+        if len(samples) <= 3:
+            is_address = valid_count >= 1  # 样本少时，有1个匹配就够了
+        else:
+            is_address = valid_count >= 2  # 样本多时，仍需2个匹配
 
         if is_address:
             info = AddressColumnInfo(

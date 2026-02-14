@@ -91,21 +91,21 @@ class LogisticsActionAgent(AgentBase):
         """
         # TODO: 接入真实业务 API
         # 示例伪代码:
-        async with httpx.AsyncClient() as client:
-            payload = {
-                "transportStatusName": transport_status_name,
-                "sessionId": session_id  # 会话ID用于审计日志
-            }
-            if order_id:
-                payload["id"] = order_id
-            if order_number:
-                payload["orderNumber"] = order_number
-
-            response = await client.post(
-                f"{get_settings().API_BASE_URL}/orderInfoService/updateOrderInfo",
-                json=payload
-            )
-            return response.json()
+        # async with httpx.AsyncClient() as client:
+        #     payload = {
+        #         "transportStatusName": transport_status_name,
+        #         "sessionId": session_id  # 会话ID用于审计日志
+        #     }
+        #     if order_id:
+        #         payload["id"] = order_id
+        #     if order_number:
+        #         payload["orderNumber"] = order_number
+        #
+        #     response = await client.post(
+        #         f"{get_settings().API_BASE_URL}/orderInfoService/updateOrderInfo",
+        #         json=payload
+        #     )
+        #     return response.json()
 
         # 模拟返回数据
         logger.info(f"[Actor] 调用修改API: session_id={session_id}, order_id={order_id}, order_number={order_number} -> {transport_status_name}")
@@ -119,46 +119,159 @@ class LogisticsActionAgent(AgentBase):
             "updated_at": "2024-01-13 16:00"
         }
 
+    async def _api_modify_logistics_node(
+        self,
+        order_id: str,
+        session_id: str,
+        tracking_id: str,
+        location: str,
+        status_description: Optional[str] = None,
+        operator: Optional[str] = None,
+        vehicle_plate: Optional[str] = None,
+        occurred_at_str: Optional[str] = None,
+        remark: Optional[str] = None,
+        content: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        修改物流节点信息（伪代码）
+
+        Args:
+            order_id: 订单ID（从查询结果获取）
+            session_id: 会话ID（用于审计追踪）
+            tracking_id: 物流轨迹ID（数据库唯一标识）
+            location: 发生地点（必要参数）
+            status_description: 状态描述（可选）
+            operator: 操作人（可选）
+            vehicle_plate: 车牌号（可选）
+            occurred_at_str: 发生时间（可选，格式: yyyy-MM-dd）
+            remark: 备注（可选）
+            content: 物流信息（可选，如"货物已送达收货地点"、"货物已从中转站发出"等自定义信息）
+            **kwargs: 其他参数
+
+        Returns:
+            操作结果
+        """
+        # 接入真实业务 API
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "orderId": order_id,              # 订单ID
+                "sessionId": session_id,            # 会话ID用于审计日志
+                "id": tracking_id,                 # 物流轨迹ID
+                "location": location,               # 发生地点
+            }
+            if status_description:
+                payload["statusDescription"] = status_description
+            if operator:
+                payload["operator"] = operator
+            if vehicle_plate:
+                payload["vehiclePlate"] = vehicle_plate
+            if occurred_at_str:
+                payload["occurredAtStr"] = occurred_at_str
+            if remark:
+                payload["remark"] = remark
+            if content:
+                payload["content"] = content
+        
+            response = await client.post(
+                f"{get_settings().API_BASE_URL}/orderInfoService/updateLogisticsTrackInfo",
+                json=payload
+            )
+        #     return response.json()
+
+        # 模拟返回数据
+        logger.info(
+            f"[Actor] 调用修改物流节点API，请求参数: order_id={order_id}, session_id={session_id}, "
+            f"tracking_id={tracking_id}, location={location}"
+        )
+        return {
+            "success": True,
+            "order_id": order_id,
+            "session_id": session_id,
+            "tracking_id": tracking_id,
+            "location": location,
+            "status_description": status_description,
+            "operator": operator,
+            "vehicle_plate": vehicle_plate,
+            "occurred_at_str": occurred_at_str,
+            "remark": remark,
+            "content": content,
+            "message": f"物流节点已更新: {location}",
+            "updated_at": "2024-01-13 16:00"
+        }
+
     async def _api_insert_logistics_node(
         self,
-        order_number: str,
+        order_id: str,
+        status_description: str,
         location: str,
-        time: str,
+        occurred_at_str: str,
+        session_id: str,
+        operator: Optional[str] = None,
+        vehicle_plate: Optional[str] = None,
+        remark: Optional[str] = None,
+        content: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
         插入物流节点（伪代码）
 
         Args:
-            order_number: 订单号
-            location: 位置
-            time: 时间
-            **kwargs: 其他参数（如车牌号、操作人等）
+            order_id: 订单唯一ID（必填）
+            status_description: 物流状态描述（必填）
+            location: 发生地点（必填）
+            occurred_at_str: 发生时间（必填，格式: yyyy-MM-dd）
+            session_id: 会话ID（用于审计追踪）
+            operator: 操作人（可选）
+            vehicle_plate: 车牌号（可选）
+            remark: 备注（可选）
+            content: 物流信息（可选，如"货物已送达收货地点"、"货物已从中转站发出"等自定义信息）
+            **kwargs: 其他参数
 
         Returns:
             操作结果
         """
-        # TODO: 接入真实业务 API
-        # 示例伪代码:
-        # async with httpx.AsyncClient() as client:
-        #     response = await client.post(
-        #         f"{API_BASE_URL}/logistics/{order_number}/nodes",
-        #         json={
-        #             "location": location,
-        #             "time": time,
-        #             **kwargs
-        #         }
-        #     )
-        #     return response.json()
+        # 接入真实业务 API
+        async with httpx.AsyncClient() as client:
+            payload = {
+                "orderId": order_id,              # 订单唯一ID
+                "sessionId": session_id,            # 会话ID用于审计日志
+                "statusDescription": status_description,  # 物流状态描述
+                "location": location,              # 发生地点
+                "occurredAtStr": occurred_at_str,   # 发生时间
+            }
+            if operator:
+                payload["operator"] = operator
+            if vehicle_plate:
+                payload["vehiclePlate"] = vehicle_plate
+            if remark:
+                payload["remark"] = remark
+            if content:
+                payload["content"] = content
+        
+            response = await client.post(
+                f"{get_settings().API_BASE_URL}/orderInfoService/insertLogisticsTrackInfo",
+                json=payload
+            )
+            return response.json()
 
         # 模拟返回数据
-        plate = kwargs.get("plate", "未知")
-        logger.info(f"[Actor] 调用插入节点API: {order_number}, {location}, {plate}")
+        logger.info(
+            f"[Actor] 调用插入物流节点API: order_id={order_id}, "
+            f"status_description={status_description}, location={location}, occurred_at_str={occurred_at_str}"
+        )
         return {
             "success": True,
-            "order_number": order_number,
-            "node_id": "NODE_" + str(hash(location + time)),
-            "message": f"已插入新节点: {location} (车牌: {plate})",
+            "order_id": order_id,
+            "status_description": status_description,
+            "location": location,
+            "occurred_at_str": occurred_at_str,
+            "operator": operator,
+            "vehicle_plate": vehicle_plate,
+            "remark": remark,
+            "content": content,
+            "node_id": "NODE_" + str(hash(location + occurred_at_str)),
+            "message": f"已插入新节点: {location}",
             "inserted_at": "2024-01-13 16:00"
         }
 
@@ -179,10 +292,8 @@ class LogisticsActionAgent(AgentBase):
             x: 包含执行指令的消息
                content 格式:
                {
-                   "action": "query" | "modify" | "insert",
-                   "tracking_number": "...",
-                   "target_status": "...",  # 修改操作
-                   "new_info": {...}        # 插入操作
+                   "action": "query" | "modify" | "modify_node" | "insert",
+                   ...
                }
 
         Returns:
@@ -198,17 +309,22 @@ class LogisticsActionAgent(AgentBase):
                 data = x.content
 
             action = data.get("action")
-            order_number = data.get("order_number")
 
             # 根据操作类型执行
             if action == "query":
-                result = await self._execute_query(order_number, data)
+                result = await self._execute_query(data.get("order_number"), data)
 
             elif action == "modify":
-                result = await self._execute_modify(order_number, data)
+                # 兼容旧的修改运输状态操作
+                result = await self._execute_modify(data.get("order_number"), data)
+
+            elif action == "modify_node":
+                # 新增：修改物流节点信息
+                result = await self._execute_modify_node(data)
 
             elif action == "insert":
-                result = await self._execute_insert(order_number, data)
+                # 插入物流节点信息
+                result = await self._execute_insert(data)
 
             else:
                 result = {
@@ -229,6 +345,7 @@ class LogisticsActionAgent(AgentBase):
             return Msg(
                  name="Actor",
                 content=json.dumps({
+
                     "success": False,
                     "error": f"指令格式错误: {e}"
                 }, ensure_ascii=False),
@@ -341,48 +458,180 @@ class LogisticsActionAgent(AgentBase):
             "data": result
         }
 
-    async def _execute_insert(
+    async def _execute_modify_node(
         self,
-        order_number: Optional[str],
         data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        执行插入操作
+        执行修改物流节点操作
 
         Args:
-            order_number: 订单号
-            data: 完整指令数据
+            data: 完整指令数据，包含:
+                - order_id: 订单ID（必填，从查询结果获取）
+                - session_id: 会话ID（用于审计追踪）
+                - tracking_id: 物流轨迹ID（必填）
+                - node_location: 发生地点（必填）
+                - status_description: 状态描述（可选）
+                - operator: 操作人（可选）
+                - vehicle_plate: 车牌号（可选）
+                - occurred_at_str: 发生时间（可选，格式: yyyy-MM-dd）
+                - remark: 备注（可选）
+                - content: 物流信息（可选）
+
+        Returns:
+            修改结果
+        """
+        # 提取参数
+        order_id = data.get("order_id")
+        session_id = data.get("session_id")
+        tracking_id = data.get("tracking_id")
+        node_location = data.get("node_location")
+        status_description = data.get("status_description")
+        operator = data.get("operator")
+        vehicle_plate = data.get("vehicle_plate")
+        occurred_at_str = data.get("occurred_at_str")
+        remark = data.get("remark")
+        content = data.get("content")
+
+        # 验证必填参数
+        if not order_id:
+            return {
+                "success": False,
+                "error": "缺少订单ID（order_id）"
+            }
+
+        if not session_id:
+            return {
+                "success": False,
+                "error": "缺少会话ID（session_id）"
+            }
+
+        if not tracking_id:
+            return {
+                "success": False,
+                "error": "缺少物流轨迹ID（tracking_id）"
+            }
+
+        if not node_location:
+            return {
+                "success": False,
+                "error": "缺少发生地点（node_location）"
+            }
+
+        # 验证日期格式
+        if occurred_at_str:
+            import re
+            date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+            if not re.match(date_pattern, occurred_at_str):
+                return {
+                    "success": False,
+                    "error": "日期格式错误，应为 yyyy-MM-dd 格式"
+                }
+
+        # 调用修改物流节点 API
+        result = await self._api_modify_logistics_node(
+            order_id=order_id,
+            session_id=session_id,
+            tracking_id=tracking_id,
+            location=node_location,
+            status_description=status_description,
+            operator=operator,
+            vehicle_plate=vehicle_plate,
+            occurred_at_str=occurred_at_str,
+            remark=remark,
+            content=content
+        )
+
+        return {
+            "action": "modify_node",
+            "success": result.get("success", True),
+            "message": result.get("message", "物流节点修改完成"),
+            "data": result
+        }
+
+    async def _execute_insert(
+        self,
+        data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        执行插入物流节点操作
+
+        Args:
+            data: 完整指令数据，包含:
+                - order_id: 订单唯一ID（必填）
+                - session_id: 会话ID（用于审计追踪）
+                - status_description: 物流状态描述（必填）
+                - node_location: 发生地点（必填）
+                - occurred_at_str: 发生时间（必填，格式: yyyy-MM-dd）
+                - operator: 操作人（可选）
+                - vehicle_plate: 车牌号（可选）
+                - remark: 备注（可选）
+                - content: 物流信息（可选）
 
         Returns:
             插入结果
         """
-        if not order_number:
+        # 提取参数
+        order_id = data.get("order_id")
+        session_id = data.get("session_id")
+        status_description = data.get("status_description")
+        node_location = data.get("node_location")
+        occurred_at_str = data.get("occurred_at_str")
+        operator = data.get("operator")
+        vehicle_plate = data.get("vehicle_plate")
+        remark = data.get("remark")
+        content = data.get("content")
+
+        # 验证必填参数
+        if not order_id:
             return {
                 "success": False,
-                "error": "缺少订单号"
+                "error": "缺少订单唯一ID（order_id）"
             }
 
-        new_info = data.get("new_info", {})
-        location = new_info.get("location")
-        time = new_info.get("time")
-
-        if not location or not time:
+        if not status_description:
             return {
                 "success": False,
-                "error": "缺少必需的节点信息（位置和时间）"
+                "error": "缺少物流状态描述（status_description）"
             }
 
-        # 调用插入 API
+        if not node_location:
+            return {
+                "success": False,
+                "error": "缺少发生地点（node_location）"
+            }
+
+        if not occurred_at_str:
+            return {
+                "success": False,
+                "error": "缺少发生时间（occurred_at_str）"
+            }
+
+        # 验证日期格式
+        import re
+        date_pattern = r'^\d{4}-\d{2}-\d{2}$'
+        if not re.match(date_pattern, occurred_at_str):
+            return {
+                "success": False,
+                "error": "日期格式错误，应为 yyyy-MM-dd 格式"
+            }
+
+        # 调用插入物流节点 API
         result = await self._api_insert_logistics_node(
-            order_number=order_number,
-            location=location,
-            time=time,
-            **{k: v for k, v in new_info.items() if k not in ["location", "time"]}
+            order_id=order_id,
+            session_id=session_id,
+            location=node_location,
+            occurred_at_str=occurred_at_str,
+            status_description=status_description,
+            operator=operator,
+            vehicle_plate=vehicle_plate,
+            remark=remark,
+            content=content
         )
 
         return {
             "action": "insert",
             "success": result.get("success", True),
-            "message": result.get("message", "插入完成"),
+            "message": result.get("message", "物流节点插入完成"),
             "data": result
         }

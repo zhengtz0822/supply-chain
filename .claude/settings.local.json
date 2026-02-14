@@ -6,7 +6,8 @@
       "Bash(python:*)",
       "Bash(pip show:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__query-docs"
+      "mcp__context7__query-docs",
+      "Bash(python3 << 'EOF'\nimport re\n\n# 读取文件\nwith open\\('/Volumes/AppleExt/Git/supply-chain/app/agents/logistics_action_agent.py', 'r'\\) as f:\n    content = f.read\\(\\)\n\n# 在 remark: Optional[str] = None, 后面添加 content: Optional[str] = None,\n# 在 _api_modify_logistics_node 的参数列表中\ncontent = re.sub\\(\n    r'\\(remark: Optional\\\\[str\\\\] = None,\\\\\\)\\(\\\\n        \\\\*\\\\*kwargs\\)',\n    r'\\\\1\\\\n        content: Optional[str] = None,\\\\2',\n    content\n\\)\n\n# 写回文件\nwith open\\('/Volumes/AppleExt/Git/supply-chain/app/agents/logistics_action_agent.py', 'w'\\) as f:\n    f.write\\(content\\)\n\nprint\\(\"Done\"\\)\nEOF)"
     ]
   }
 }
