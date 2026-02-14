@@ -35,7 +35,8 @@ from app.schemas.address import (
     AddressMatchTaskConfig,
     AddressSource,
     AddressRecommendation,
-    AddressMatch
+    AddressMatch,
+    AddressDetailData,
 )
 
 # 配置日志
@@ -415,6 +416,7 @@ class AddressService:
 4. **冲突处理**：若多个候选高置信且互斥 → action设为 manual_review；若无合理匹配 → action设为 keep_original。
 ## 使用工具
 1. **地址解析工具**：如果经纬度缺失使用maps_geo工具返回经纬度。
+2. **maps_text_search**: 如果需要搜索POI信息，使用该工具进行搜索
 ## 输出要求
 请严格按照 JSON Schema 输出结果，包含：
 - 只输出 JSON，不要任何其他文字、解释、Markdown（如 ```json）。
@@ -566,3 +568,117 @@ class AddressService:
         except Exception as e:
             logger.error(f"[地址匹配] Agent分析失败: {str(e)}", exc_info=True)
             raise ValueError(f"地址匹配分析失败: {str(e)}")
+
+    @staticmethod
+    def _build_address_parse_prompt() -> str:
+        """
+        构建地址解析智能体的系统提示词
+
+        Returns:
+            系统提示词字符串
+        """
+        prompt = """你是一个地址解析专家，负责将用户输入的地址信息解析为结构化的数据。
+
+## 解析要求
+
+### 一级地址（first_level_address）
+- 精确到具体的大楼信息
+- 例如：输入"上海市虹桥路1号港汇广场3楼NIKE"，一级地址应为"上海市徐汇区虹桥路1号上海港汇广场"
+
+### 二级地址（second_level_address）
+- 通过AI分析，精确到具体的门牌、楼层、门店等更细的颗粒度
+- 例如：输入"上海市虹桥路1号港汇广场3楼NIKE"，二级地址应为"上海市徐汇区虹桥路1号上海港汇恒隆广场 3F Nike 门店"
+
+### 地理信息提取
+- **location**: 经纬度信息，格式为"经度,纬度"（如：121.123456,31.123456）
+- **country**: 国家（如：中国）
+- **province**: 省份（如：上海市）
+- **city**: 城市（如：上海市）
+- **district**: 区（如：徐汇区）
+- **street**: 街道（如：虹桥路1号）
+- **category**: 类别（商圈、住宅、学校、写字楼等，如果能够识别的话）
+
+## 使用工具
+1. **maps_geo**: 如果地址信息不完整或需要获取经纬度，使用该工具获取地理编码信息,调用一次后续使用该工具的结果进行分析,无需多次调用
+2. **maps_text_search**: 如果需要搜索POI信息，使用该工具进行搜索
+
+## 输出要求
+请严格按照 JSON Schema 输出结果，确保 JSON 语法完全正确。
+"""
+        return prompt
+
+    @staticmethod
+    async def parse_address_detail(address: str) -> Dict:
+        """
+        地址详情解析 (使用 AgentScope ReActAgent)
+
+        将原始地址解析为结构化的地址信息
+
+        Args:
+            address: 原始地址信息
+
+        Returns:
+            包含 success, message, result 的字典
+        """
+        logger.info(f"[地址解析] 原始地址: {address}")
+
+        # 获取 API Key
+        settings = get_settings()
+        api_key = settings.DASHSCOPE_API_KEY
+
+        # 构建系统提示词
+        sys_prompt = AddressService._build_address_parse_prompt()
+        logger.info(f"[地址解析] 系统提示词长度: {len(sys_prompt)} 字符")
+
+        import agentscope
+        agentscope.init(studio_url="http://localhost:3000")
+
+        # 初始化工具
+        toolkit = get_toolkit()
+
+        # 初始化 DashScope 模型
+        model = DashScopeChatModel(
+            model_name="qwen-plus",
+            api_key=api_key,
+            stream=False,
+            enable_thinking=False,
+        )
+
+        # 创建 ReActAgent
+        agent = ReActAgent(
+            name="address_parse_agent",
+            sys_prompt=sys_prompt,
+            model=model,
+            formatter=DashScopeChatFormatter(),
+            toolkit=toolkit,
+        )
+
+        # 构建用户消息
+        user_prompt = f"""请解析以下地址信息，返回结构化的数据：
+
+## 原始地址
+{address}
+
+请使用工具获取准确的地理信息，然后输出结构化结果。"""
+
+        try:
+            # 调用 ReActAgent
+            logger.info(f"[地址解析] 开始调用 ReActAgent 分析...")
+            logger.info(f"[地址解析] 用户提示词: {user_prompt}")
+
+            msg = Msg("user", user_prompt, "user")
+            llm_response = await agent(msg, structured_model=AddressDetailData)
+
+            # 从响应中获取结构化结果
+            logger.info(f"[地址解析] 解析结果: {llm_response}")
+            result = llm_response.metadata  # AgentScope 将结构化输出放在 metadata 字段中
+
+            return {
+                'success': True,
+                'message': '地址解析成功',
+                'result': result
+            }
+
+        except Exception as e:
+            logger.error(f"[地址解析] Agent分析失败: {str(e)}", exc_info=True)
+            raise ValueError(f"地址解析失败: {str(e)}")

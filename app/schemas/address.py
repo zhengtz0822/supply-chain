@@ -115,3 +115,26 @@ class AddressMatchResult(BaseModel):
 
 
 AddressMatchResponse = ApiResponse[AddressMatchResult]
+
+
+# 地址解析详情相关模型
+class AddressDetailRequest(BaseModel):
+    """地址解析详情请求"""
+    address: str = Field(..., description="原始地址信息")
+
+
+class AddressDetailData(BaseModel):
+    """地址解析详情数据"""
+    original_address: str = Field(..., description="原始地址信息")
+    first_level_address: Optional[str] = Field(None, description="一级地址信息（精确到大楼）")
+    second_level_address: Optional[str] = Field(None, description="二级地址信息（精细到门牌/楼层/门店）")
+    location: Optional[str] = Field(None, description="经纬度信息（格式：经度,纬度）")
+    country: Optional[str] = Field(None, description="国家")
+    province: Optional[str] = Field(None, description="省份")
+    city: Optional[str] = Field(None, description="城市")
+    district: Optional[str] = Field(None, description="区")
+    street: Optional[str] = Field(None, description="街道")
+    category: Optional[str] = Field(None, description="类别（商圈、住宅、学校等）")
+
+
+AddressDetailResponse = ApiResponse[AddressDetailData]

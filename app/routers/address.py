@@ -7,7 +7,9 @@ from app.schemas.address import (
     AddressParseResponse,
     AddressParseData,
     AddressMatchRequest,
-    AddressMatchResponse
+    AddressMatchResponse,
+    AddressDetailRequest,
+    AddressDetailResponse,
 )
 from app.services.address_service import AddressService
 
@@ -148,6 +150,54 @@ async def match_addresses(request: AddressMatchRequest):
     except Exception as e:
         logger.error(f"[Router] 处理失败: {str(e)}", exc_info=True)
         return AddressMatchResponse(
+            success=False,
+            message=f"处理失败: {str(e)}",
+            data=None
+        )
+
+
+@router.post("/parse-detail", response_model=AddressDetailResponse, summary="地址详情解析")
+async def parse_address_detail(request: AddressDetailRequest):
+    """
+    地址详情解析
+
+    功能说明:
+    - 将原始地址解析为结构化的地址信息
+    - 提取一级地址（精确到大楼）
+    - 提取二级地址（精细到门牌/楼层/门店）
+    - 获取经纬度及行政区划信息
+
+    使用 AgentScope ReActAgent 进行智能分析
+    """
+    logger.info(f"[Router] 收到地址详情解析请求，地址: {request.address}")
+
+    if not request.address:
+        logger.error("[Router] 地址信息为空")
+        return AddressDetailResponse(
+            success=False,
+            message="地址信息不能为空",
+            data=None
+        )
+
+    try:
+        result = await AddressService.parse_address_detail(address=request.address)
+
+        return AddressDetailResponse(
+            success=result['success'],
+            message=result['message'],
+            data=result.get('result')
+        )
+
+    except ValueError as e:
+        logger.error(f"[Router] 地址详情解析失败: {str(e)}")
+        return AddressDetailResponse(
+            success=False,
+            message=f"地址详情解析失败: {str(e)}",
+            data=None
+        )
+    except Exception as e:
+        logger.error(f"[Router] 处理失败: {str(e)}", exc_info=True)
+        return AddressDetailResponse(
             success=False,
             message=f"处理失败: {str(e)}",
             data=None
