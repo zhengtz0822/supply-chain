@@ -599,13 +599,82 @@ class AddressService:
 - **category**: 类别（商圈、住宅、学校、写字楼等，如果能够识别的话）
 
 ## 使用工具
-1. **maps_geo**: 如果地址信息不完整或需要获取经纬度，使用该工具获取地理编码信息,调用一次后续使用该工具的结果进行分析,无需多次调用
-
+- 如果如果有需要调用以下工具进行调用,尽可能减少调用次数,比如只调用一次
+1. **maps_geo**: 如果地址信息不完整或需要获取经纬度，使用该工具获取地理编码信息.
+2. **maps_text_search**: 如果需要搜索POI信息，使用该工具进行搜索
+- 如果没有提供工具结果，使用你的内置知识解析
 
 ## 输出要求
 请严格按照 JSON Schema 输出结果，确保 JSON 语法完全正确。
 """
         return prompt
+
+    @staticmethod
+    async def _fetch_geocoding(address: str) -> Optional[str]:
+        """
+        预先调用高德地图工具获取地理信息原始结果
+
+        同时调用 maps_geo 和 maps_text_search 各一次，提高精度
+        直接返回原始文本，让 LLM 自己解析，避免依赖返回格式
+
+        Args:
+            address: 地址字符串
+
+        Returns:
+            工具返回的原始文本，包含地理信息。如果失败返回 None
+        """
+        from app.tools.mcp_clients import create_gaode_mcp_client
+
+        try:
+            # 创建 MCP 客户端
+            client = create_gaode_mcp_client()
+
+            raw_results = []
+
+            # 步骤1: 调用 maps_geo 获取地理编码
+            logger.info(f"[地址解析] 预先调用 maps_geo: {address}")
+            try:
+                # geo_result = await client.call_tool(
+                #     "maps_geo",
+                #     arguments={"address": address}
+                # )
+                # 获取可调用的函数对象
+                func_maps_geo = await client.get_callable_function("maps_geo",wrap_tool_result= True)
+                # geo_params = {"address": address}
+                geo_result = await func_maps_geo(address= address)
+
+                logger.info(f"[地址解析] maps_geo 返回: {geo_result}")
+                if geo_result:
+                    # 直接转换为文本，让 LLM 解析
+                    raw_results.append(f"## maps_geo 工具返回结果\n{str(geo_result)}\n")
+            except Exception as e:
+                logger.warning(f"[地址解析] maps_geo 调用失败: {str(e)}")
+
+            # 步骤2: 调用 maps_text_search 搜索 POI 信息
+            logger.info(f"[地址解析] 预先调用 maps_text_search: {address}")
+            try:
+
+                text_search_params = {"keywords": address}
+                search_result = await client.get_callable_function(keywords= address)
+
+                logger.info(f"[地址解析] maps_text_search 返回: {search_result}")
+                if search_result:
+                    # 直接转换为文本，让 LLM 解析
+                    raw_results.append(f"## maps_text_search 工具返回结果\n{str(search_result)}\n")
+            except Exception as e:
+                logger.warning(f"[地址解析] maps_text_search 调用失败: {str(e)}")
+
+            # 如果至少有一个工具返回了信息，返回原始结果
+            if raw_results:
+                combined = "\n".join(raw_results)
+                logger.info(f"[地址解析] 合并后的原始结果: {combined[:500]}...")
+                return combined
+            else:
+                return None
+
+        except Exception as e:
+            logger.warning(f"[地址解析] 地理信息获取失败，将使用 LLM 推理: {str(e)}")
+            return None
 
     @staticmethod
     async def parse_address_detail(address: str) -> Dict:
@@ -626,17 +695,36 @@ class AddressService:
         settings = get_settings()
         api_key = settings.DASHSCOPE_API_KEY
 
-        # 构建系统提示词
-        sys_prompt = AddressService._build_address_parse_prompt()
-        logger.info(f"[地址解析] 系统提示词长度: {len(sys_prompt)} 字符")
-
         import agentscope
         agentscope.init(studio_url="http://localhost:3000")
 
-        # 初始化工具
-        toolkit = get_toolkit()
+        # 步骤1: 预先调用工具获取地理信息原始结果（避免 Agent 反复调用）暂时给个false
+        geo_raw_result = None # await AddressService._fetch_geocoding(address)
 
-        # 初始化 DashScope 模型
+        # 步骤2: 构建系统提示词
+        sys_prompt = AddressService._build_address_parse_prompt()
+        logger.info(f"[地址解析] 系统提示词长度: {len(sys_prompt)} 字符，已预先获取地理信息: {geo_raw_result is not None}")
+
+        # 步骤3: 构建 user_prompt，如果有工具结果则注入
+        if geo_raw_result:
+            user_prompt = f"""请解析以下地址信息，返回结构化的数据：
+
+## 原始地址
+{address}
+
+## 高德地图工具返回结果（已预先获取）
+{geo_raw_result}
+
+请基于上述原始地址和高德地图工具返回结果，输出结构化结果。"""
+        else:
+            user_prompt = f"""请解析以下地址信息，返回结构化的数据：
+
+## 原始地址
+{address}
+
+请使用你的内置知识解析地址，输出结构化结果。"""
+
+        # 步骤4: 初始化 DashScope 模型
         model = DashScopeChatModel(
             model_name="qwen-plus",
             api_key=api_key,
@@ -644,27 +732,19 @@ class AddressService:
             enable_thinking=False,
         )
 
-        # 创建 ReActAgent
+        # 步骤5: 创建ReActAgent（
         agent = ReActAgent(
             name="address_parse_agent",
             sys_prompt=sys_prompt,
             model=model,
             formatter=DashScopeChatFormatter(),
-            toolkit=toolkit,
+            toolkit=get_toolkit(),
         )
-
-        # 构建用户消息
-        user_prompt = f"""请解析以下地址信息，返回结构化的数据：
-
-## 原始地址
-{address}
-
-请使用工具获取准确的地理信息，然后输出结构化结果。"""
 
         try:
             # 调用 ReActAgent
             logger.info(f"[地址解析] 开始调用 ReActAgent 分析...")
-            logger.info(f"[地址解析] 用户提示词: {user_prompt}")
+            logger.info(f"[地址解析] 用户提示词: {user_prompt[:500]}...")
 
             msg = Msg("user", user_prompt, "user")
             llm_response = await agent(msg, structured_model=AddressDetailData)

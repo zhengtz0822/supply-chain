@@ -15,6 +15,9 @@ async def initialize_tools():
     toolkit.update_tool_groups(["amps"], active=True)
     # print(f"✅ 注册了 {len(toolkit.get_json_schemas())} 个 MCP 工具")
     logging.info(f"✅ 注册了 {len(toolkit.get_json_schemas())} 个 MCP 工具")
+    # 打印工具schema
+    for schema in toolkit.get_json_schemas():
+        logging.info(f"工具 Schema 信息: {schema}")
 
 def get_toolkit() -> Toolkit:
     return toolkit
