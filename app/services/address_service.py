@@ -1,43 +1,38 @@
 # 依赖安装命令:
 # pip install pandas openpyxl xlrd agentscope
+import logging
+import os
+import uuid
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional
 
 import pandas as pd
-import re
-import os
-import logging
-import asyncio
-from typing import List, Dict, Tuple, Optional
-from pathlib import Path
-
-from agentscope.model import DashScopeChatModel
 # AgentScope 导入
+import agentscope
 from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.message import Msg
+from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
-
+from langchain_core.messages import HumanMessage
 # LangChain 导入 (仅用于 call_llm_for_address_refinement)
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
 
 # 配置导入
 from app.core.config import get_settings
-# mcp工具导入
-from app.tools.tool_registry import get_toolkit
-
 from app.schemas.address import (
     AddressColumnInfo,
-    AddressResultItem,
     AddressRefinementData,
     AddressMatchSource,
     AddressMatchResult,
     AddressMatchCandidate,
     AddressMatchTaskConfig,
-    AddressSource,
-    AddressRecommendation,
-    AddressMatch,
     AddressDetailData,
 )
+from app.tools.tool_registry import create_fresh_toolkit
+
+# mcp工具导入
+# from app.tools.tool_registry import get_toolkit
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -478,11 +473,11 @@ class AddressService:
         logger.info(f"[地址匹配] 系统提示词长度: {len(sys_prompt)} 字符")
         # 打印提示词
         logger.info(f"[地址匹配] 系统提示词: \n{sys_prompt}")
-        import agentscope
-        agentscope.init(studio_url="http://localhost:3000")
+        # import agentscope
+        # agentscope.init(studio_url="http://localhost:3000")
 
-        # 初始化工具
-        toolkit = get_toolkit()
+        # 初始化工具,按需初始化
+        toolkit = await create_fresh_toolkit()
         # 初始化 DashScope 模型
         model = DashScopeChatModel(
             model_name="qwen-plus",
@@ -599,13 +594,13 @@ class AddressService:
 - **category**: 类别（商圈、住宅、学校、写字楼等，如果能够识别的话）
 
 ## 使用工具
-- 如果如果有需要调用以下工具进行调用,尽可能减少调用次数,比如只调用一次
+- 如果如果有需要调用以下工具进行调用,尽可能减少调用次数.
 1. **maps_geo**: 如果地址信息不完整或需要获取经纬度，使用该工具获取地理编码信息.
 2. **maps_text_search**: 如果需要搜索POI信息，使用该工具进行搜索
 - 如果没有提供工具结果，使用你的内置知识解析
 
 ## 输出要求
-请严格按照 JSON Schema 输出结果，确保 JSON 语法完全正确。
+请严格按照 JSON Schema 输出结果，确保 JSON 语法完全正确,每次都响应结构化的数据。
 """
         return prompt
 
@@ -695,8 +690,8 @@ class AddressService:
         settings = get_settings()
         api_key = settings.DASHSCOPE_API_KEY
 
-        import agentscope
-        agentscope.init(studio_url="http://localhost:3000")
+        # import agentscope
+        # agentscope.init(studio_url="http://localhost:3000")
 
         # 步骤1: 预先调用工具获取地理信息原始结果（避免 Agent 反复调用）暂时给个false
         geo_raw_result = None # await AddressService._fetch_geocoding(address)
@@ -731,21 +726,22 @@ class AddressService:
             stream=False,
             enable_thinking=False,
         )
-
+        # 创建 Toolkit
+        toolkit = await create_fresh_toolkit()
         # 步骤5: 创建ReActAgent（
         agent = ReActAgent(
             name="address_parse_agent",
             sys_prompt=sys_prompt,
             model=model,
             formatter=DashScopeChatFormatter(),
-            toolkit=get_toolkit(),
+            toolkit=toolkit,
         )
 
         try:
             # 调用 ReActAgent
             logger.info(f"[地址解析] 开始调用 ReActAgent 分析...")
             logger.info(f"[地址解析] 用户提示词: {user_prompt[:500]}...")
-
+            logger.info(f"Agent memory before call: {agent.memory.content}")
             msg = Msg("user", user_prompt, "user")
             llm_response = await agent(msg, structured_model=AddressDetailData)
 

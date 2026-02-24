@@ -20,12 +20,17 @@ pydantic==2.9.2
 pydantic-settings==2.6.0
 
 # LLM 和 Agent 框架
-agentscope>=0.1.0  # Alibaba AgentScope 多智能体框架
+agentscope==1.0.14  # Alibaba AgentScope 多智能体框架
+
+# LangChain 生态
+langchain-core>=0.3.0  # LangChain 核心组件
+langchain-openai>=0.2.0  # OpenAI 兼容接口支持
 
 # 数据处理 (地址解析)
 pandas>=2.0.0
 openpyxl>=3.1.0  # Excel 支持
 xlrd>=2.0.0  # 旧版 Excel 支持
+pathlib>=1.0.1  # 文件路径操作
 
 # 其他依赖
 python-multipart==0.0.22  # 表单数据支持

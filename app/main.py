@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.tools.tool_registry import initialize_tools
+# from app.tools.tool_registry import initialize_tools
 import logging
 import agentscope
 from app.core.config import get_settings
@@ -29,8 +29,11 @@ async def lifespan(app: FastAPI):
     print("Initializing database...")
     init_db()
     print("Database initialized successfully!")
-    # 初始化 MCP 工具
-    await initialize_tools()
+    import agentscope
+    agentscope.init(studio_url="http://localhost:3000")
+
+    # 初始化 MCP 工具,按需加载工具
+    # await initialize_tools()
 
     
     # 注意：AgentScope 在 LogisticsService 中初始化

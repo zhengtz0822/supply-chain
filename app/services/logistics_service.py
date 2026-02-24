@@ -310,9 +310,9 @@ class LogisticsService:
         # 确保共享资源已初始化
         if not LogisticsService._initialized:
             await LogisticsService.initialize()
-        import agentscope
-        # 初始化agentScope
-        agentscope.init(studio_url="http://localhost:3000")
+        # import agentscope
+        # # 初始化agentScope
+        # agentscope.init(studio_url="http://localhost:3000")
 
         # 先创建会话独立的 Memory
         # 注意：如果之前的测试导致 memory 中有格式不兼容的历史消息，
