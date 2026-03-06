@@ -55,6 +55,8 @@ class LogisticsService:
 
     # 类变量，存储共享配置（不存储Agent实例）
     _model_config = None
+    _model_config_stream = None  # 流式版本
+    _reasoning_model_config = None # 推理
     _vision_model_config = None
     _single_formatter = None
     _multi_formatter = None
@@ -87,11 +89,24 @@ class LogisticsService:
         )
         logger.info("[LogisticsService] 数据库引擎已创建")
 
-        # 创建模型配置（共享）
+        # 创建模型配置（共享）- 非流式
         cls._model_config = DashScopeChatModel(
             model_name="qwen-plus",
             api_key=api_key,
             stream=False,
+        )
+
+        cls._reasoning_model_config = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key=api_key,
+            stream=False,
+        )
+
+        # 创建模型配置（共享）- 流式版本（用于Dialog Agent）
+        cls._model_config_stream = DashScopeChatModel(
+            model_name="qwen-plus",
+            api_key=api_key,
+            stream=True,  # 启用流式
         )
 
         # 创建感知模型配置（视觉模型）
@@ -211,7 +226,7 @@ class LogisticsService:
         #     )
         #     result.append(image_block)
 
-        return result
+        # return result
 
     @staticmethod
     def _extract_text_from_msg(msg: Msg) -> str:
@@ -266,7 +281,7 @@ class LogisticsService:
         )
 
         reasoner = LogisticsReasoningAgent(
-            model_config=LogisticsService._model_config,
+            model_config=LogisticsService._reasoning_model_config,
             formatter=LogisticsService._multi_formatter,
             memory=memory,
         )
@@ -274,13 +289,187 @@ class LogisticsService:
         actor = LogisticsActionAgent()
 
         dialog = LogisticsDialogAgent(
-            model_config=LogisticsService._model_config,
+            model_config=LogisticsService._model_config_stream,  # 使用流式模型配置
             formatter=LogisticsService._single_formatter,
             memory=memory,
         )
 
         return perceiver, reasoner, actor, dialog
 
+    @staticmethod
+    async def chat_stream(session_id: str, content: List[Dict[str, Any]]):
+        """
+        物流订单对话处理入口(流式版本)
+        
+        工作流程:
+        1. 为本次请求创建独立的 Memory（实现会话隔离）
+        2. 感知智能体提取关键信息（单号、地址等）
+        3. 推理智能体分析意图、规划步骤
+        4. 执行智能体执行业务操作
+        5. 对话智能体**流式**生成用户友好的回复
+        
+        Args:
+            session_id: 会话ID，用于多轮对话上下文管理
+            content: 用户输入内容列表，支持 text/image_url/image
+        
+        Yields:
+            流式生成的文本块
+        """
+        logger.info(f"[LogisticsService Stream] ordertalk_stream 被调用，session_id: {session_id}")
+
+        # 确保共享资源已初始化
+        if not LogisticsService._initialized:
+            await LogisticsService.initialize()
+
+        # 创建会话独立的 Memory
+        memory = AsyncSQLAlchemyMemory(
+            engine_or_session=LogisticsService._memory_engine,
+            user_id="default",
+            session_id=session_id,
+        )
+        logger.info(f"[LogisticsService Stream] 创建会话独立 Memory: {session_id}")
+
+        # 创建本次请求专用的 Agent 实例
+        perceiver, reasoner, actor, dialog = LogisticsService._create_agents(memory=memory)
+        logger.info(f"[LogisticsService Stream] 创建新Agent实例")
+
+        # 用于存储中间结果，供流式生成使用
+        stream_context = {
+            'session_id': session_id,
+            'intent': 'unknown',
+            'perception': None,
+            'reasoning': None,
+            'execution': None,
+        }
+
+        try:
+            # 构建多模态用户消息
+            user_content = LogisticsService._build_user_message(content)
+            logger.info(f"[LogisticsService Stream] 用户输入内容类型: {type(user_content).__name__}")
+
+            user_msg = Msg(
+                name="user",
+                content=user_content,
+                role="user"
+            )
+
+            # ====================================================================
+            # Step 1: 感知 - 提取关键信息
+            # ====================================================================
+            logger.info("[LogisticsService Stream] === Step 1: 感知 ===")
+            perception_msg = await perceiver.perceive(user_msg)
+            perception_result = perception_msg.metadata if hasattr(perception_msg, 'metadata') else {}
+            stream_context['perception'] = perception_result
+            logger.info(f"[LogisticsService Stream] 感知结果: {perception_result}")
+
+            # ====================================================================
+            # Step 2: 推理 - 分析意图、规划步骤
+            # ====================================================================
+            logger.info("[LogisticsService Stream] === Step 2: 推理 ===")
+            user_input = LogisticsService._extract_user_text(content)
+            reasoning_msg = await reasoner.reason(
+                user_input=user_input,
+                perception_result=perception_result
+            )
+            reasoning_result = reasoning_msg.metadata if hasattr(reasoning_msg, 'metadata') else {}
+            stream_context['reasoning'] = reasoning_result
+            intent = reasoning_result.get("intent", "unknown")
+            stream_context['intent'] = intent
+            logger.info(f"[LogisticsService Stream] 推理结果: intent={intent}")
+
+            # ====================================================================
+            # Step 3: 判断是否需要执行操作
+            # ====================================================================
+            execution_result = None
+            
+            if intent in ["query", "modify", "modify_node", "insert"]:
+                logger.info("[LogisticsService Stream] === Step 3: 执行 ===")
+                modify_type = reasoning_result.get("modify_type")
+
+                if modify_type == "modify_node":
+                    action_content = {
+                        "action": "modify_node",
+                        "session_id": session_id,
+                        "order_id": reasoning_result.get("order_id"),
+                        "tracking_id": reasoning_result.get("tracking_id"),
+                        "node_location": reasoning_result.get("node_location"),
+                        "status_description": reasoning_result.get("status_description"),
+                        "operator": reasoning_result.get("operator"),
+                        "vehicle_plate": reasoning_result.get("vehicle_plate"),
+                        "occurred_at_str": reasoning_result.get("occurred_at_str"),
+                        "remark": reasoning_result.get("remark"),
+                        "content": reasoning_result.get("content"),
+                    }
+                elif intent == "insert":
+                    action_content = {
+                        "action": "insert",
+                        "session_id": session_id,
+                        "order_id": reasoning_result.get("order_id"),
+                        "node_location": reasoning_result.get("node_location"),
+                        "occurred_at_str": reasoning_result.get("occurred_at_str"),
+                        "status_description": reasoning_result.get("status_description"),
+                        "operator": reasoning_result.get("operator"),
+                        "vehicle_plate": reasoning_result.get("vehicle_plate"),
+                        "remark": reasoning_result.get("remark"),
+                        "content": reasoning_result.get("content"),
+                    }
+                else:
+                    action_content = {
+                        "action": intent,
+                        "session_id": session_id,
+                        "order_id": reasoning_result.get("order_id"),
+                        "order_number": reasoning_result.get("order_number"),
+                        "transport_status_name": reasoning_result.get("transport_status_name"),
+                        "new_info": reasoning_result.get("new_info", {}),
+                    }
+
+                action_msg = Msg(
+                    name="Reasoner",
+                    content=json.dumps(action_content, ensure_ascii=False),
+                    role="assistant"
+                )
+
+                exec_result_msg = await actor(action_msg)
+                execution_result = json.loads(exec_result_msg.content)
+                stream_context['execution'] = execution_result
+                logger.info(f"[LogisticsService Stream] 执行结果: {execution_result}")
+
+            # ====================================================================
+            # Step 4: 对话 - 流式生成用户友好的回复
+            # ====================================================================
+            logger.info("[LogisticsService Stream] === Step 4: 流式对话 ===")
+
+            if isinstance(reasoning_result, dict):
+                reasoning_dict = reasoning_result
+            else:
+                reasoning_dict = {
+                    "intent": reasoning_result.get("intent") if hasattr(reasoning_result, "get") else "unknown",
+                    "clarification_questions": reasoning_result.get("clarification_questions", []) if hasattr(reasoning_result, "get") else [],
+                }
+
+            # 使用流式生成方法
+            full_reply = []
+            async for chunk in dialog.format_response_stream(
+                reasoning_result=reasoning_dict,
+                execution_result=execution_result
+            ):
+                full_reply.append(chunk)
+                yield chunk
+
+            # 将完整回复保存到 memory
+            reply_text = "".join(full_reply)
+            assistant_msg = Msg(
+                name="assistant",
+                content=reply_text,
+                role="assistant"
+            )
+            await memory.add(assistant_msg)
+            logger.info(f"[LogisticsService Stream] 流式回复完成，长度: {len(reply_text)}")
+
+        except Exception as e:
+            logger.error(f"[LogisticsService Stream] 处理失败: {str(e)}", exc_info=True)
+            yield f"抱歉，处理您的请求时遇到了问题: {str(e)}"
+    
     @staticmethod
     async def chat(session_id: str, content: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

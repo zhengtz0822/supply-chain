@@ -285,7 +285,7 @@ class AddressService:
         # 汇总所有地址数据
         if all_address_data:
             combined_df = pd.concat(all_address_data, ignore_index=True)
-            # 再次去重
+            # # 再次去重
             combined_df = combined_df.drop_duplicates()
             # 将 combined_df 的地址转换为字符串数组
             combined_df['addresses'] = combined_df.apply(lambda row: row.astype(str).tolist(), axis=1)
@@ -721,7 +721,7 @@ class AddressService:
 
         # 步骤4: 初始化 DashScope 模型
         model = DashScopeChatModel(
-            model_name="qwen-plus",
+            model_name="qwen-turbo",
             api_key=api_key,
             stream=False,
             enable_thinking=False,

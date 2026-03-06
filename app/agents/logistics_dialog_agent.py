@@ -130,7 +130,7 @@ class LogisticsDialogAgent(ReActAgent):
         execution_result: Optional[Dict[str, Any]] = None
     ) -> Msg:
         """
-        格式化响应消息
+        格式化响应消息（非流式版本）
 
         Args:
             reasoning_result: 推理智能体的结果
@@ -166,6 +166,78 @@ class LogisticsDialogAgent(ReActAgent):
                 content=f"抱歉，处理您的请求时遇到了问题: {str(e)}",
                 role="assistant"
             )
+
+    async def format_response_stream(
+        self,
+        reasoning_result: Dict[str, Any],
+        execution_result: Optional[Dict[str, Any]] = None
+    ):
+        """
+        格式化响应消息（流式版本）
+
+        Args:
+            reasoning_result: 推理智能体的结果
+            execution_result: 执行智能体的结果（如果有）
+
+        Yields:
+            流式生成的文本块（增量内容）
+        """
+        logger.info(f"[Dialog Stream] 开始流式格式化响应，意图: {reasoning_result.get('intent')}")
+
+        # 构建输入
+        dialog_input = self._build_dialog_input(reasoning_result, execution_result)
+
+        # 创建对话消息
+        dialog_msg = Msg(
+            name="user",
+            content=dialog_input,
+            role="user"
+        )
+
+        try:
+            # 直接调用模型获取流式响应
+            # 模型需要 list[dict] 格式的 messages
+            messages = [
+                {"role": "system", "content": self.sys_prompt},
+                {"role": "user", "content": dialog_input},
+            ]
+            
+            model_response = await self.model(
+                messages=messages,
+                stream=True
+            )
+            
+            # 处理流式响应
+            previous_content = ""
+            async for chunk in model_response:
+                # 提取当前内容
+                if hasattr(chunk, 'content'):
+                    content = chunk.content
+                    # 处理 content 可能是 list[dict] 的情况
+                    if isinstance(content, list) and len(content) > 0:
+                        # 提取所有 text 类型的内容
+                        texts = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get('type') == 'text':
+                                texts.append(item.get('text', ''))
+                        current_content = ''.join(texts)
+                    else:
+                        current_content = str(content) if content else ""
+                elif isinstance(chunk, str):
+                    current_content = chunk
+                else:
+                    current_content = str(chunk)
+                
+                # 只发送增量内容
+                if len(current_content) > len(previous_content):
+                    delta = current_content[len(previous_content):]
+                    previous_content = current_content
+                    if delta:
+                        yield delta
+
+        except Exception as e:
+            logger.error(f"[Dialog Stream] 流式生成回复失败: {e}", exc_info=True)
+            yield f"抱歉，处理您的请求时遇到了问题: {str(e)}"
 
     def _build_dialog_input(
         self,

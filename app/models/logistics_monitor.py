@@ -1,6 +1,7 @@
 # models.py
 from pydantic import BaseModel, Field
-from typing import List, Union, Literal
+from typing import List, Union, Literal, Optional
+
 
 class TextContent(BaseModel):
     type: Literal["text"] = "text"
@@ -26,3 +27,11 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class StreamChatResponse(BaseModel):
+    """流式聊天响应模型"""
+    type: str  # "chunk" | "complete" | "error"
+    content: str
+    session_id: str
+    timestamp: Optional[str] = None
