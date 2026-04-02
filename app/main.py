@@ -30,7 +30,11 @@ async def lifespan(app: FastAPI):
     init_db()
     print("Database initialized successfully!")
     import agentscope
-    agentscope.init(studio_url="http://localhost:3000")
+    # AgentScope 初始化，仅在配置了 studio_url 时连接
+    init_kwargs = {}
+    if settings.AGENTSCOPE_STUDIO_URL:
+        init_kwargs["studio_url"] = settings.AGENTSCOPE_STUDIO_URL
+    agentscope.init(**init_kwargs)
 
     # 初始化 MCP 工具,按需加载工具
     # await initialize_tools()

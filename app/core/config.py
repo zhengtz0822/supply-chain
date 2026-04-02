@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # 高德地图APPKEY
     AMAP_APP_KEY: str = ""
 
+    # AgentScope Studio 地址 (可选，不设置则不连接)
+    AGENTSCOPE_STUDIO_URL: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = True

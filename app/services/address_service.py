@@ -291,8 +291,16 @@ class AddressService:
             combined_df['addresses'] = combined_df.apply(lambda row: row.astype(str).tolist(), axis=1)
             combined_dfArray = combined_df['addresses'].tolist()
             # 调用大模型规则化地理或者是去除非地址信息
-            # 展平所有地址字符串
-            flat_addresses = [addr for addrs in combined_dfArray for addr in addrs]
+            # 展平所有地址字符串，并基于单个地址值去重
+            flat_addresses = []
+            seen = set()
+            for addrs in combined_dfArray:
+                for addr in addrs:
+                    addr_clean = str(addr).strip()
+                    # 过滤空值和 nan，并去重
+                    if addr_clean and addr_clean.lower() != 'nan' and addr_clean not in seen:
+                        seen.add(addr_clean)
+                        flat_addresses.append(addr_clean)
             logger.info(f"[{batch_id}] 开始调用 LLM 处理地址数据，共 {len(flat_addresses)} 条地址")
             refinement_result = AddressService.call_llm_for_address_refinement(flat_addresses)
             logger.info(f"[{batch_id}] LLM 处理完成，识别结果: {len(refinement_result.results)} 条")
